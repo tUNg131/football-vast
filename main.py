@@ -25,7 +25,7 @@ def h5(root, save_path, ball_delta_t, joints_delta_t, sequence_length):
 
 
 def train(train_path, val_path, batch_size, max_epochs, version, fast_dev_run, precision,
-          model_args, model_kwargs):
+          random, model_args, model_kwargs):
     import os
 
     import torch
@@ -43,7 +43,9 @@ def train(train_path, val_path, batch_size, max_epochs, version, fast_dev_run, p
 
     num_workers = os.cpu_count() - 1
     train_loader = DataLoader(HumanPoseDataset(train_path),
-                              batch_size=batch_size, num_workers=num_workers)
+                              batch_size=batch_size,
+                              drop_type=random,
+                              num_workers=num_workers)
     val_loader = DataLoader(HumanPoseDataset(val_path),
                             batch_size=batch_size, num_workers=num_workers)
 
@@ -80,6 +82,7 @@ if __name__ == "__main__":
     parser_train.add_argument("--batch-size", type=int, default=128)
     parser_train.add_argument("--version", type=str, required=True)
     parser_train.add_argument("--max-epochs", type=str, required=True)
+    parser_train.add_argument("--random", type=str, required=True)
     parser_train.add_argument("--precision", type=str, required=True,
         help="32-true, 16-mixed, bf16-mixed, transformer-engine, 16-true, bf16-true, 64-true")
     parser_train.add_argument("--fast-dev-run", nargs='?', const=True, type=int, default=False,
