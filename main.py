@@ -42,11 +42,10 @@ def train(train_path, val_path, batch_size, max_epochs, version, fast_dev_run, p
     torch.set_float32_matmul_precision('medium')
 
     num_workers = os.cpu_count() - 1
-    train_loader = DataLoader(HumanPoseDataset(train_path),
+    train_loader = DataLoader(HumanPoseDataset(train_path, drop_type=random),
                               batch_size=batch_size,
-                              drop_type=random,
                               num_workers=num_workers)
-    val_loader = DataLoader(HumanPoseDataset(val_path),
+    val_loader = DataLoader(HumanPoseDataset(val_path, drop_type=random),
                             batch_size=batch_size, num_workers=num_workers)
 
     logger = TensorBoardLogger("tb_logs", version=version)
