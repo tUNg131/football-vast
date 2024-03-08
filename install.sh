@@ -12,7 +12,7 @@
 python /workspace/src/main.py train \
     --train-path /workspace/data/train.hdf5 \
     --val-path /workspace/data/val.hdf5 \
-    --batch-size 1 \
+    --batch-size 128 \
     --version test \
     --max-epochs 1 \
     --fast-dev-run \
