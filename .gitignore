@@ -1,0 +1,5 @@
+.DS_Store
+workspace/*
+__pycache__
+tb_logs
+data
