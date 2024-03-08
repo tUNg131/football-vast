@@ -124,6 +124,7 @@ if __name__ == "__main__":
               max_epochs=args.max_epochs,
               fast_dev_run=args.fast_dev_run,
               precision=args.precision,
+              random=args.random,
               model_args=model_args,
               model_kwargs=model_kwargs)
     else:
