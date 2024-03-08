@@ -80,7 +80,7 @@ if __name__ == "__main__":
     parser_train.add_argument("--val-path", type=str, required=True)
     parser_train.add_argument("--batch-size", type=int, default=128)
     parser_train.add_argument("--version", type=str, required=True)
-    parser_train.add_argument("--max-epochs", type=str, required=True)
+    parser_train.add_argument("--max-epochs", type=int, required=True)
     parser_train.add_argument("--random", type=str, required=True)
     parser_train.add_argument("--precision", type=str, required=True,
         help="32-true, 16-mixed, bf16-mixed, transformer-engine, 16-true, bf16-true, 64-true")
