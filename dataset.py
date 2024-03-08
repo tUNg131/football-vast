@@ -43,7 +43,7 @@ class HumanPoseDataset(torch.utils.data.Dataset):
         return data, target
 
     def __len__(self):
-        return len(self._data_array) * 2
+        return len(self._data_array)
 
     @staticmethod
     def drop_chunk(data, gap_size):
