@@ -17,7 +17,6 @@ python /workspace/src/main.py train \
     --max-epochs 1 \
     --fast-dev-run \
     --precision transformer-engine
-    /
 
 # tensorboard --logdir /workspace/tb_logs --port=8008
 
