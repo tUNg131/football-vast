@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Update package list and install Git
-# pip install h5py lightning tensorboard gdown
+# pip install h5py lightning tensorboard gdown git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
 # Download data
 # gdown 1BsysF9kXg0WWWQ7RYufecsiOGLyZRxbD --folder --output /workspace/data
