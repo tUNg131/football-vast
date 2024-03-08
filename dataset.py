@@ -58,11 +58,7 @@ class HumanPoseDataset(torch.utils.data.Dataset):
     @staticmethod
     def drop_random(data, ratio):
         # Set a random fraction of elements along the first dimension to NaN
-        random_mask = (torch.rand(data.size(0)) < ratio).unsqueeze(1)
-
-        # Broadcast the mask along the second dimension
-        random_mask = random_mask.expand_as(data)
-
+        random_mask = (torch.rand(data.size(0)) < ratio)
         data[random_mask] = float('nan')
         return data
 
