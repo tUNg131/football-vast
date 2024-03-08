@@ -64,7 +64,7 @@ class HumanPoseDataset(torch.utils.data.Dataset):
 
     def drop(self, data):
         if self.drop_type.startswith("chunk"):
-            gap_size = int(self.drop_type[5:])
+            gap_size = random.randint(1, int(self.drop_type[5:]))
             return self.drop_chunk(data, gap_size=gap_size)
         elif self.drop_type.startswith("random"):
             ratio = float(self.drop_type[6:]) / 100
