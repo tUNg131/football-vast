@@ -141,6 +141,16 @@ class HumanPoseModel(LightningModule):
         self.log("eval_loss", loss, sync_dist=True)
         return loss
 
+    def test_step(self, batch, batch_idx):
+        data, target = batch
+
+        output = self(data)
+        nan_mask = torch.isnan(data)
+        loss = F.mse_loss(output[nan_mask], target[nan_mask])
+
+        self.log("test_loss", loss, sync_dist=True)
+        return loss
+
     def configure_optimizers(self):
         optimizer = LAMB(self.parameters(), lr=0.0015)
         return optimizer

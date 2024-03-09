@@ -3,3 +3,4 @@ workspace/*
 __pycache__
 tb_logs
 data
+.ipynb_checkpoints
