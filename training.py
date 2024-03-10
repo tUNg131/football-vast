@@ -52,7 +52,7 @@ def main(hparams: Namespace) -> None:
             early_stop_call_back,
             checkpoint_callback
         ],
-        deterministic=True,
+        deterministic=hparams.deterministic,
         check_val_every_n_epoch=1,
         fast_dev_run=hparams.fast_dev_run,
         max_epochs=hparams.max_epochs,
@@ -172,6 +172,13 @@ if __name__ == "__main__":
         default=None,
         const=True,
         help="CUDNN auto-tuner will try to find the best algorithm for the hardware."
+    )
+    parser.add_argument(
+        "--deterministic",
+        nargs="?",
+        default=False,
+        const=True,
+        help="This flag sets the torch.backends.cudnn.deterministic flag."
     )
 
     FootballTransformer.update_parser_with_model_args(parser)
