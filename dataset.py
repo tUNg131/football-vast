@@ -1,71 +1,119 @@
-import os
 import random
+from typing import Tuple, List, Callable, Union, Optional
 
 import torch
 import h5py
 import numpy as np
+from torch import Tensor
+from torch.utils.data import Dataset
 
 
-class HumanPoseDataset(torch.utils.data.Dataset):
+class SetOriginToCenterOfMassAndAlignXY:
 
-    def __init__(self, path, drop_type='chunk15', device=None):
-        if not os.path.isfile(path):
-            raise
+    def __call__(self, sample: Tensor) -> Tensor:
+        # Rotation matrix
+        direction = self.direction(sample)
+        sin = direction[1]
+        cos = direction[0]
+        rot = torch.tensor([[cos + sin, cos - sin],
+                            [sin - cos, sin + cos]])
 
+        # Translate to set the orgin to center of mass
+        sample = sample - self.centroids_mean(sample)
+
+        # Rotate to the x-y line
+        sample = torch.matmul(sample, rot)
+        return sample
+
+    @staticmethod
+    def centroids_mean(sample: Tensor) -> Tensor: 
+        return sample - sample[:, -1].mean(dim=0)
+
+    @staticmethod
+    def direction(sample: Tensor) -> Tensor:
+        first = sample[0, -1]
+        last = sample[-1, -1]
+
+        direction = last - first
+        normalised_direction = direction / torch.norm(direction)
+        return normalised_direction
+
+
+class AddRandomNoise:
+
+    def __init__(self, std: float) -> None:
+        self.std = std
+
+    def __call__(self, sample: Tensor) -> Tensor:
+        noise = self.std * torch.randn_like(sample)
+        return noise + sample
+
+
+class DropRandomUniform:
+    # Set a random fraction of elements along the first dimension to NaN
+
+    def __init__(self, ratio: int) -> None:
+        self.ratio = ratio / 100
+
+    def __call__(self, sample: Tensor) -> Tensor:
+        random_mask = torch.rand(sample.size(0)) < self.ratio
+        sample[random_mask] = float('nan')
+        return sample
+
+
+class DropRandomChunk:
+
+    def __init__(self, chunk_size: int) -> None:
+        self.chunk_size = chunk_size
+
+    def get_chunk_size(self) -> int:
+        return self.chunk_size
+
+    def __call__(self, sample: Tensor) -> Tensor:
+        chunk_size = self.get_chunk_size()
+        start_index = random.randint(1, sample.size(0) - chunk_size - 2)
+        sample[start_index:start_index + chunk_size] = float('nan')
+        return sample
+
+
+class DropRandomChunkVariableSize(DropRandomChunk):
+    def get_chunk_size(self) -> int:
+        return random.randint(1, self.chunk_size)
+
+
+class HumanPoseDataset(Dataset):
+    __included_joint_indices__ = [0, 3, 6, 7, 9, 12, 14, 15, 16, 19, 22, 23, 25, 28]
+
+    def __init__(self,
+                 path: str,
+                 n_timesteps: int,
+                 transform: Optional[Union[Callable, List[Callable]]] = []) -> None:
         self.path = path
-        self.device = device
-        self.drop_type = drop_type
+        self.n_timesteps = n_timesteps
+        self.transform = transform
 
         with h5py.File(path, "r") as f:
             ds = f['data']
-            self._data_array = np.empty(ds.shape, dtype=np.float32)
-            ds.read_direct(self._data_array)
+            self._data = np.empty(ds.shape, dtype=ds.dtype)
+            ds.read_direct(self._data)
 
-    def preprocessing(self, data):
-        # Subtract mid-hip
-        data = data - data[..., 13, np.newaxis, :]
+    def __getitem__(self, index) -> Tuple[Tensor, Tensor]:
+        raw = self._data[index]
+        assert len(raw) >= self.n_timesteps
 
-        # Remove joints
-        removed_indexes = [1, 2, 4, 5, 8, 10, 11, 13, 17, 18, 20, 21, 24, 26, 27]
-        data = np.delete(data, removed_indexes, axis=1)
+        sample = torch.from_numpy(raw[:self.n_timesteps+1])
 
-        return data
+        # Only keep main joints
+        sample = sample[:, self.__included_joint_indices__]
+        target = sample.clone()
 
-    def __getitem__(self, idx):
-        clean = self.preprocessing(self._data_array[idx])
+        if callable(self.transform):
+            sample = self.transform(sample)
+        else:
+            for tsfrm in self.transform:
+                sample = tsfrm(sample)
 
-        # data = torch.tensor(clean, dtype=torch.float, device=self.device)
-        data = torch.tensor(clean, device=self.device)
-        target = data.clone()
+        return sample, target
 
-        data = self.drop(data)
-
-        return data, target
-
-    def __len__(self):
-        return len(self._data_array)
-
-    @staticmethod
-    def drop_chunk(data, gap_size):
-        sequence_length = data.size(dim=0)
-
-        assert sequence_length - gap_size - 2 >= 1
-
-        start_index = random.randint(1, sequence_length - gap_size - 2)
-        data[start_index:start_index + gap_size] = float('nan')
-        return data
-
-    @staticmethod
-    def drop_random(data, ratio):
-        # Set a random fraction of elements along the first dimension to NaN
-        random_mask = (torch.rand(data.size(0)) < ratio)
-        data[random_mask] = float('nan')
-        return data
-
-    def drop(self, data):
-        if self.drop_type.startswith("chunk"):
-            gap_size = random.randint(1, int(self.drop_type[5:]))
-            return self.drop_chunk(data, gap_size=gap_size)
-        elif self.drop_type.startswith("random"):
-            ratio = float(self.drop_type[6:]) / 100
-            return self.drop_random(data, ratio=ratio)
+    def __len__(self) -> int:
+        return len(self._data)
