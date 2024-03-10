@@ -215,7 +215,7 @@ class FootballTransformer(pl.LightningModule):
         inputs, targets = batch
         model_out = self.__forward(inputs)
         loss = self.loss(inputs, model_out, targets)
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, sync_dist=True)
         return loss
 
     def validation_step(self,
@@ -225,7 +225,7 @@ class FootballTransformer(pl.LightningModule):
         inputs, targets = batch
         model_out = self.__forward(inputs)
         loss =  self.loss(inputs, model_out, targets)
-        self.log("val_loss", loss)
+        self.log("val_loss", loss, sync_dist=True)
         return loss
 
     def configure_optimizers(self) -> Optimizer:

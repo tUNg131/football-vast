@@ -58,6 +58,8 @@ def main(hparams: Namespace) -> None:
         max_epochs=hparams.max_epochs,
         min_epochs=hparams.min_epochs,
         precision=hparams.precision,
+        profiler=hparams.profiler,
+        benchmark=hparams.benchmark,
     )
 
     # Start training
@@ -128,12 +130,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fast-dev-run",
         nargs="?",
+        type=int,
         const=True,
         default=False,
-        help=(
-            "Enable fast development run."
-            " Only run 1 training and 1 validation batch."
-        )
+        help=("Enable fast development run.")
     )
     parser.add_argument(
         "--min-epochs",
@@ -155,6 +155,23 @@ if __name__ == "__main__":
             "32-true, 16-mixed, bf16-mixed,"
             " transformer-engine, 16-true, bf16-true, 64-true"
         )
+    )
+    parser.add_argument(
+        "--profiler",
+        default=None,
+        type=str,
+        help=(
+            "To profile individual steps during training and "
+            "assist in identifying bottlenecks."
+        ),
+        choices=["simple", "advanced"]
+    )
+    parser.add_argument(
+        "--benchmark",
+        nargs="?",
+        default=None,
+        const=True,
+        help="CUDNN auto-tuner will try to find the best algorithm for the hardware."
     )
 
     FootballTransformer.update_parser_with_model_args(parser)
