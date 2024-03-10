@@ -315,7 +315,7 @@ class FootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--optimizer",
-            default="LAMB",
+            default="JITLamb",
             type=str,
             help="Name of the optimizer. Can be inside torch.optim."
         )
