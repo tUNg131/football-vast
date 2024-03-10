@@ -40,9 +40,11 @@ def main(hparams: Namespace) -> None:
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_path,
         filename="{epoch}-{val_loss:.6f}",
-        save_last=True,
+        verbose=True,
+        save_weights_only=True,
+        monitor=hparams.monitor,
         save_top_k=hparams.save_top_k,
-        mode=hparams.metric_mode
+        mode=hparams.metric_mode,
     )
 
     # Init trainer
@@ -109,7 +111,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--patience",
-        default=2,
+        default=4,
         type=int,
         help=(
             "Number of epochs with no improvement "
