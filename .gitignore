@@ -1,6 +1,10 @@
-.DS_Store
-workspace/*
+# Folders
 __pycache__
-tb_logs
-data
 .ipynb_checkpoints
+
+# User folder
+data
+log/*/checkpoints
+
+# Files
+*.DS_Store
