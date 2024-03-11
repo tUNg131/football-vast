@@ -54,13 +54,15 @@ class Embedding(nn.Module):
             .repeat(hparams.batch_size, 1, hparams.n_joints)
             .view(hparams.batch_size, -1)
         )
-        self.register_buffer("timestep_labels", timestep_labels)
+        self.register_buffer(
+            "timestep_labels", timestep_labels, persistent=False)
 
         joint_labels = (
             torch.arange(hparams.n_joints, dtype=torch.int)
             .repeat(hparams.batch_size, hparams.n_timesteps)
         )
-        self.register_buffer("joint_labels", joint_labels)
+        self.register_buffer(
+            "joint_labels", joint_labels, persistent=False)
 
     def forward(self, x):
         time_emb = self.time_embedding(self.timestep_labels)
@@ -198,6 +200,9 @@ class FootballTransformer(pl.LightningModule):
         """Initializes the loss function/s."""
         self._loss = nn.functional.mse_loss
 
+    def forward(self, x: Tensor) -> Tensor:
+        return self.__forward(x)
+
     def __forward(self, x: Tensor) -> Tensor:
         embeddings = self.embedding(x)
         features = self.encoder(embeddings)
@@ -252,7 +257,7 @@ class FootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--n-joints",
-            default=14,
+            default=15,
             type=int,
             help="# of joints in one timestep."
         )

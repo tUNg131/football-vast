@@ -15,8 +15,8 @@ class SetOriginToCenterOfMassAndAlignXY:
         direction = self.direction(sample)
         sin = direction[1]
         cos = direction[0]
-        rot = torch.tensor([[cos + sin, cos - sin],
-                            [sin - cos, sin + cos]])
+        rot = torch.tensor([[sin + cos, cos - sin],
+                            [sin - cos, cos + sin]])
 
         # Translate to set the orgin to center of mass
         sample = sample - self.centroids_mean(sample)
@@ -82,7 +82,7 @@ class DropRandomChunkVariableSize(DropRandomChunk):
 
 
 class HumanPoseDataset(Dataset):
-    __included_joint_indices__ = [0, 3, 6, 7, 9, 12, 14, 15, 16, 19, 22, 23, 25, 28]
+    __included_joint_indices__ = [0, 3, 6, 7, 9, 12, 13, 14, 15, 16, 19, 22, 23, 25, 28]
 
     def __init__(self,
                  path: str,
