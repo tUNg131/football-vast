@@ -175,13 +175,6 @@ if __name__ == "__main__":
         const=True,
         help="CUDNN auto-tuner will try to find the best algorithm for the hardware."
     )
-    parser.add_argument(
-        "--deterministic",
-        nargs="?",
-        default=False,
-        const=True,
-        help="This flag sets the torch.backends.cudnn.deterministic flag."
-    )
 
     FootballTransformer.update_parser_with_model_args(parser)
     hparams = parser.parse_args()
