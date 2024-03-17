@@ -124,6 +124,10 @@ class FootballTransformer(pl.LightningModule):
                     AddRandomNoise(self.hparams.training_noise_std),
                 ]
 
+            # transform += [
+            #     AddGeometricInvariantFeatures()
+            # ]
+
             # Mask
             if self.hparams.mask:
                 transform_name = self.hparams.mask[0]
@@ -231,7 +235,12 @@ class FootballTransformer(pl.LightningModule):
         return output
 
     def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
+        inputs = inputs[:, :, :, :3]
+        model_out = model_out[:, :, :, :3]
+        targets = targets[:, :, :, :3]
+
         nan_mask = torch.isnan(inputs)
+
         return self._loss(model_out[nan_mask], targets[nan_mask])
 
     def training_step(self,

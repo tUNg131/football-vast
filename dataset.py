@@ -14,7 +14,10 @@ class AddGeometricInvariantFeatures:
         velocity = sample[1:] - sample[:-1]
 
         velocity_magnitude = torch.norm(velocity[1:] + velocity[:-1], dim=2, keepdim=True) / 2
-        omega = torch.sum(velocity[1:] * velocity[:-1], dim=2, keepdim=True)
+        omega = torch.arccos(torch.sum(velocity[1:] * velocity[:-1], dim=2, keepdim=True) / (
+            torch.norm(velocity[1:], dim=2, keepdim=True) *
+            torch.norm(velocity[:-1], dim=2, keepdim=True)
+        ))
 
         return torch.cat((sample[1:-1], velocity_magnitude, omega), dim=2)
 
