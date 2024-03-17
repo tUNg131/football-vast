@@ -8,6 +8,38 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 
+class AddGeometricInvariantFeatures:
+    
+    def __call__(self, sample: Tensor) -> Tensor:
+        velocity = sample[1:] - sample[:-1]
+
+        velocity_magnitude = torch.norm(velocity[1:] + velocity[:-1], dim=2, keepdim=True) / 2
+        omega = torch.sum(velocity[1:] * velocity[:-1], dim=2, keepdim=True)
+
+        return torch.cat((sample[1:-1], velocity_magnitude, omega), dim=2)
+
+
+class SetOriginToJoint:
+
+    def __init__(self, joint: int) -> None:
+        self.joint = joint
+
+    def __call__(self, sample: Tensor) -> Tensor:
+        data_without_joint = torch.cat((sample[:, :self.joint], sample[:, self.joint+1:]),
+                                       dim=1)
+        joint = sample[:, self.joint]
+        return data_without_joint - joint.unsqueeze(1)
+
+
+class FilterJoints:
+
+    def __init__(self, included: List[int]) -> None:
+        self.included = included
+    
+    def __call__(self, sample: Tensor) -> Tensor:
+        return sample[:, self.included]
+
+
 class SetOriginToCenterOfMassAndAlignXY:
 
     def __call__(self, sample: Tensor) -> Tensor:
@@ -15,8 +47,9 @@ class SetOriginToCenterOfMassAndAlignXY:
         direction = self.direction(sample)
         sin = direction[1]
         cos = direction[0]
-        rot = torch.tensor([[sin + cos, cos - sin],
-                            [sin - cos, cos + sin]])
+        rot = torch.tensor([[sin + cos, cos - sin, 0],
+                            [sin - cos, cos + sin, 0],
+                            [0, 0, 1]])
 
         # Translate to set the orgin to center of mass
         sample = sample - self.centroids_mean(sample)
@@ -86,10 +119,10 @@ class HumanPoseDataset(Dataset):
 
     def __init__(self,
                  path: str,
-                 n_timesteps: int,
+                 preprocessing: Optional[Union[Callable, List[Callable]]] = [],
                  transform: Optional[Union[Callable, List[Callable]]] = []) -> None:
         self.path = path
-        self.n_timesteps = n_timesteps
+        self.preprocessing = preprocessing
         self.transform = transform
 
         with h5py.File(path, "r") as f:
@@ -98,20 +131,22 @@ class HumanPoseDataset(Dataset):
             ds.read_direct(self._data)
 
     def __getitem__(self, index) -> Tuple[Tensor, Tensor]:
-        raw = self._data[index]
-        assert len(raw) >= self.n_timesteps
+        raw = torch.from_numpy(self._data[index])
 
-        sample = torch.from_numpy(raw[:self.n_timesteps+1])
-
-        # Only keep main joints
-        sample = sample[:, self.__included_joint_indices__]
-        target = sample.clone()
+        if callable(self.preprocessing):
+            clean = self.preprocessing(raw)
+        else:
+            for p in self.preprocessing:
+                raw = p(raw)
+            clean = raw
+        target = clean.clone()
 
         if callable(self.transform):
-            sample = self.transform(sample)
+            sample = self.transform(clean)
         else:
-            for tsfrm in self.transform:
-                sample = tsfrm(sample)
+            for t in self.transform:
+                clean = t(clean)
+            sample = clean
 
         return sample, target
 

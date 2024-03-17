@@ -123,7 +123,7 @@ if __name__ == "__main__":
     # Trainer
     #####################
     parser.add_argument(
-        "--determinstic",
+        "--deterministic",
         nargs="?",
         const=True,
         default=False,

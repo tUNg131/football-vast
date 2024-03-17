@@ -1,6 +1,6 @@
 import os
 from argparse import ArgumentParser, Namespace
-from typing import Tuple, List, Type, Optional, Any
+from typing import Tuple, List, Type, Optional, Any, Callable
 
 import torch
 import pytorch_lightning as pl
@@ -11,6 +11,9 @@ from torch.utils.data import DataLoader
 import optimizer
 from dataset import (
     HumanPoseDataset,
+    AddGeometricInvariantFeatures,
+    SetOriginToJoint,
+    FilterJoints,
     SetOriginToCenterOfMassAndAlignXY,
     DropRandomChunkVariableSize,
     DropRandomUniform,
@@ -20,6 +23,7 @@ from dataset import (
 
 
 DEFAULT_LOADER_WORKER_COUNT = os.cpu_count() - 1
+DEFAULT_JOINT_INDICES = [0, 3, 6, 7, 9, 12, 13, 14, 15, 16, 19, 22, 23, 25, 28]
 
 
 class Embedding(nn.Module):
@@ -93,74 +97,88 @@ class FootballTransformer(pl.LightningModule):
             self.save_hyperparameters(model.hparams)
             self.model = model
 
-        def get_loader_kwargs(self, dataset, training: Optional[bool] = False) -> dict:
-            return {
-                "dataset": dataset,
-                "shuffle": training,
-                "batch_size": self.hparams.batch_size,
-                "num_workers": self.hparams.loader_workers,
-                "pin_memory": self.model.on_gpu,
-                "drop_last": True,
-            }
+        def setup(self, stage: str) -> None:
+            preprocessing = [
+                FilterJoints(DEFAULT_JOINT_INDICES),
+            ]
 
-        def get_masking_strategy_args(self, strategy: Any) -> Tuple[int]:
-            return (int(strategy[-2:]),)
+            if self.hparams.preprocessing == "midhip":
+                preprocessing += [
+                    SetOriginToJoint(13), # midhip
+                ]
+            elif self.hparams.preprocessing == "com":
+                preprocessing += [
+                    SetOriginToCenterOfMassAndAlignXY(),
+                ]
+            elif self.hparams.preprocessing == "invariant":
+                preprocessing += [
+                    AddGeometricInvariantFeatures()
+                ]
+            elif self.hparams.preprocessing == "none":
+                pass
 
-        def get_transform(self, training: bool = False) -> List[callable]:
             transform = []
-            # Align dataset
-            if self.hparams.align_dataset:
-                transform.append(SetOriginToCenterOfMassAndAlignXY())
-
             # Training noise
-            if training and self.hparams.training_noise_std > 0:
-                transform.append(AddRandomNoise(self.hparams.training_noise_std))
+            if self.hparams.training_noise_std > 0:
+                transform += [
+                    AddRandomNoise(self.hparams.training_noise_std),
+                ]
 
-            # Mask transform
-            masking_strategy = self.hparams.masking_strategy
-            args = self.get_masking_strategy_args(masking_strategy)
-            if masking_strategy.startswith("vchunk"):
-                masking_transform_cls = DropRandomChunkVariableSize
-            elif masking_strategy.startswith("chunk"):
-                masking_transform_cls = DropRandomChunk
-            elif masking_strategy.startswith("random"):
-                masking_transform_cls = DropRandomUniform
-            else:
-                masking_transform_cls = DropRandomChunkVariableSize
+            # Mask
+            if self.hparams.mask:
+                transform_name = self.hparams.mask[0]
+                if transform_name == "chunk":
+                    t = DropRandomChunk
+                elif transform_name == "vchunk":
+                    t = DropRandomChunkVariableSize
+                elif transform_name == "random":
+                    t = DropRandomUniform
+                args = self.hparams.mask[1:]
+                transform += [
+                    t(*args),
+                ]
 
-            transform.append(masking_transform_cls(*args))
-            return transform
+
+            if stage == "fit":
+                self._train_dataset = HumanPoseDataset(
+                    path=self.hparams.train_path,
+                    preprocessing=preprocessing,
+                    transform=transform,
+                )
+
+                self._val_dataset = HumanPoseDataset(
+                    path=self.hparams.val_path,
+                    preprocessing=preprocessing,
+                    transform=transform,
+                )
+            elif stage == "test":
+                self._test_dataset = HumanPoseDataset(
+                    path=self.hparams.test_path,
+                    preprocessing=preprocessing,
+                    transform=transform,
+                )
 
         def train_dataloader(self) -> DataLoader:
             """Function that loads the train set."""
-            self._train_dataset = HumanPoseDataset(
-                path=self.hparams.train_path,
-                n_timesteps=self.hparams.n_timesteps,
-                transform=self.get_transform(training=True),
-            )
-            loader_kwargs = self.get_loader_kwargs(dataset=self._train_dataset,
-                                                   training=True)
-            return DataLoader(**loader_kwargs)
+            return DataLoader(dataset=self._train_dataset,
+                              shuffle=True,
+                              batch_size=self.hparams.batch_size,
+                              num_workers=self.hparams.loader_workers,
+                              pin_memory=self.model.on_gpu)
 
         def val_dataloader(self) -> DataLoader:
             """Function that loads the validation set."""
-            self._val_dataset = HumanPoseDataset(
-                path=self.hparams.val_path,
-                n_timesteps=self.hparams.n_timesteps,
-                transform=self.get_transform(training=False),
-            )
-            loader_kwargs = self.get_loader_kwargs(dataset=self._val_dataset)
-            return DataLoader(**loader_kwargs)
+            return DataLoader(dataset=self._val_dataset,
+                              batch_size=self.hparams.batch_size,
+                              num_workers=self.hparams.loader_workers,
+                              pin_memory=self.model.on_gpu)
 
         def test_dataloader(self) -> DataLoader:
             """Function that loads the test set."""
-            self._test_dataset = HumanPoseDataset(
-                path=self.hparams.test_path,
-                n_timesteps=self.hparams.n_timesteps,
-                transform=self.get_transform(training=False),
-            )
-            loader_kwargs = self.get_loader_kwargs(dataset=self._test_dataset)
-            return DataLoader(**loader_kwargs)
+            return DataLoader(dataset=self._test_dataset,
+                              batch_size=self.hparams.batch_size,
+                              num_workers=self.hparams.loader_workers,
+                              pin_memory=self.model.on_gpu)
 
     def __init__(self, hparams: Namespace) -> None:
         super().__init__()
@@ -257,7 +275,7 @@ class FootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--n-joints",
-            default=15,
+            default=14,
             type=int,
             help="# of joints in one timestep."
         )
@@ -326,19 +344,19 @@ class FootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--train-path",
-            default="data/train.hdf5",
+            default="data/h5/10fps/train.hdf5",
             type=str,
             help="Path to the file containing the training data."
         )
         parser.add_argument(
             "--val-path",
-            default="data/val.hdf5",
+            default="data/h5/10fps/val.hdf5",
             type=str,
             help="Path to the file containing the validation data."
         )
         parser.add_argument(
             "--test-path",
-            default="data/test.hdf5",
+            default="data/h5/10fps/test.hdf5",
             type=str,
             help="Path to the file containing the test data."
         )
@@ -349,11 +367,16 @@ class FootballTransformer(pl.LightningModule):
             help="Batch size to be used."
         )
         parser.add_argument(
-            "--align-dataset",
-            const=True,
-            nargs="?",
-            default=False,
-            help="Recenter & rotate data."
+            "--preprocessing",
+            default="midhip",
+            type=str,
+            help="midhip, com, invariant, none"
+        )
+        parser.add_argument(
+            "--mask",
+            default=["vchunk", 15],
+            nargs="+",
+            help="Specify masking strategy"
         )
         parser.add_argument(
             "--training-noise-std",
