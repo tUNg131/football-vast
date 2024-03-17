@@ -164,21 +164,24 @@ class FootballTransformer(pl.LightningModule):
                               shuffle=True,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu)
+                              pin_memory=self.model.on_gpu,
+                              drop_last=True)
 
         def val_dataloader(self) -> DataLoader:
             """Function that loads the validation set."""
             return DataLoader(dataset=self._val_dataset,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu)
+                              pin_memory=self.model.on_gpu,
+                              drop_last=True)
 
         def test_dataloader(self) -> DataLoader:
             """Function that loads the test set."""
             return DataLoader(dataset=self._test_dataset,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu)
+                              pin_memory=self.model.on_gpu,
+                              drop_last=True)
 
     def __init__(self, hparams: Namespace) -> None:
         super().__init__()
