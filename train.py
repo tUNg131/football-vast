@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from argparse import ArgumentParser, Namespace
 
+import torch
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -10,6 +11,7 @@ from transformer import TrainableFootballTransformer
 
 def main(hparams: Namespace) -> None:
     seed_everything(hparams.seed, workers=True)
+    torch.set_float32_matmul_precision('medium')
 
     # Init model and data
     model = TrainableFootballTransformer(hparams)

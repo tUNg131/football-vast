@@ -153,7 +153,7 @@ class TrainableFootballTransformer(pl.LightningModule):
 
         loss = self._loss(model_out[nan_position],
                           targets[nan_position],
-                          reduction='none')
+                          reduction='none').cpu()
 
         nan_count = torch.sum(nan_position, dim=(1, 2)) // \
             (self.hparams.n_joints * self.hparams.d_joint)
@@ -165,14 +165,13 @@ class TrainableFootballTransformer(pl.LightningModule):
             start += gap_size
 
     def on_test_epoch_end(self) -> None:
-        plt.ylabel("MSE")
         for gap_size, losses in self.test_loss.items():
             l = torch.stack(losses).mean(dim=0)
+            plt.ylabel("MSE")
             plt.plot(range(1, gap_size + 1), l, label=f"Gap size = {gap_size}")
-        plt.title("MSE by timestep position")
-        plt.legend()
+            plt.title(f"MSE for gap size = {gap_size}")
 
-        self.logger.experiment.add_figure("Test loss", plt.gcf())
+            self.logger.experiment.add_figure(f"Loss/gapsize = {gap_size}", plt.gcf())
 
         self.test_loss.clear()
  
