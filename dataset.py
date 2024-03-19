@@ -15,7 +15,7 @@ class DropRandomUniform:
     # Set a random fraction of elements along the first dimension to NaN
 
     def __init__(self, ratio: int) -> None:
-        self.ratio = ratio / 100
+        self.ratio = int(ratio) / 100
 
     def __call__(self, sample: Tensor) -> Tensor:
         random_mask = torch.rand(sample.size(0)) < self.ratio
