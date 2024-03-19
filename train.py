@@ -14,7 +14,7 @@ def float_or_int(s):
 
 def main(hparams: Namespace) -> None:
     seed_everything(hparams.seed, workers=True)
-    torch.set_float32_matmul_precision(hparams.torch_matmul_precision)
+    torch.set_float32_matmul_precision(hparams.pytorch_matmul_precision)
 
     # Init model and data
     model = TrainableFootballTransformer(hparams)
@@ -67,6 +67,9 @@ def main(hparams: Namespace) -> None:
         precision=hparams.precision,
         profiler=hparams.profiler,
         benchmark=hparams.benchmark,
+        limit_train_batches=hparams.limit_train_batches,
+        limit_val_batches=hparams.limit_val_batches,
+        limit_test_batches=hparams.limit_test_batches,
     )
 
     # Start training
