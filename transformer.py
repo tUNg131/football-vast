@@ -1,9 +1,11 @@
 import os
 from argparse import ArgumentParser, Namespace
 from typing import Tuple, Type
+from collections import defaultdict
 
 import torch
 import pytorch_lightning as pl
+import matplotlib.pyplot as plt
 from torch import nn, Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
@@ -65,24 +67,21 @@ class TrainableFootballTransformer(pl.LightningModule):
                               shuffle=True,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu,
-                              drop_last=True)
+                              pin_memory=self.model.on_gpu)
 
         def val_dataloader(self) -> DataLoader:
             """Function that loads the validation set."""
             return DataLoader(dataset=self._val_dataset,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu,
-                              drop_last=True)
+                              pin_memory=self.model.on_gpu)
 
         def test_dataloader(self) -> DataLoader:
             """Function that loads the test set."""
             return DataLoader(dataset=self._test_dataset,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu,
-                              drop_last=True)
+                              pin_memory=self.model.on_gpu)
 
     def __init__(self, hparams: Namespace) -> None:
         super().__init__()
@@ -117,8 +116,8 @@ class TrainableFootballTransformer(pl.LightningModule):
         return self._model(x)
 
     def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
-        nan_mask = torch.isnan(inputs)
-        return self._loss(model_out[nan_mask], targets[nan_mask])
+        nan_position = torch.isnan(inputs)
+        return self._loss(model_out[nan_position], targets[nan_position])
 
     def training_step(self,
                       batch: Tuple[Tensor, Tensor],
@@ -139,7 +138,44 @@ class TrainableFootballTransformer(pl.LightningModule):
         loss =  self.loss(inputs, model_out, targets)
         self.log("val_loss", loss, sync_dist=True)
         return loss
+    
+    def on_test_epoch_start(self) -> None:
+        self.test_loss = defaultdict(list)
 
+    def test_step(self,
+                  batch: Tuple[Tensor, Tensor],
+                  batch_index: int) -> Tensor:
+        
+        inputs, targets = batch
+        model_out = self._model(inputs)
+
+        nan_position = torch.isnan(inputs)
+
+        loss = self._loss(model_out[nan_position],
+                          targets[nan_position],
+                          reduction='none')
+
+        nan_count = torch.sum(nan_position, dim=(1, 2)) // \
+            (self.hparams.n_joints * self.hparams.d_joint)
+        start = 0
+        for gap_size in nan_count:
+            self.test_loss[gap_size].append(
+                loss[start:start+gap_size]
+            )
+            start += gap_size
+
+    def on_test_epoch_end(self) -> None:
+        plt.ylabel("MSE")
+        for gap_size, losses in self.test_loss.items():
+            l = torch.stack(losses).mean(dim=0)
+            plt.plot(range(1, gap_size + 1), l, label=f"Gap size = {gap_size}")
+        plt.title("MSE by timestep position")
+        plt.legend()
+
+        self.logger.experiment.add_figure("Test loss", plt.gcf())
+
+        self.test_loss.clear()
+ 
     def configure_optimizers(self) -> Optimizer:
         optimizer_name = self.hparams.optimizer
         try:

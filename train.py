@@ -67,6 +67,11 @@ def main(hparams: Namespace) -> None:
     # Start training
     trainer.fit(model=model, datamodule=model.datamodule)
 
+    # Start testing
+    trainer.test(model=model,
+                 datamodule=model.datamodule,
+                 verbose=True)
+
 
 if __name__ == "__main__":
     #####################
