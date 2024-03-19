@@ -75,8 +75,9 @@ def main(hparams: Namespace) -> None:
     # Start training
     trainer.fit(model=model, datamodule=model.datamodule)
 
+
     # Start testing
-    trainer.test(model=model,
+    trainer.test(ckpt_path="best",
                  datamodule=model.datamodule,
                  verbose=True)
 
