@@ -1,5 +1,3 @@
-import torch
-
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
@@ -87,7 +85,7 @@ def animate(*sequences):
     artists = []
     for i, sequence in enumerate(sequences):
         # Create 3D axis
-        ax = fig.add_subplot(1, len(sequences), i+1, projection='3d')
+        ax = fig.add_subplot(1, len(sequence), i+1, projection='3d')
 
         # Scatter plot initialization
         points = ax.scatter([], [], [], c='blue', marker='o')
@@ -119,7 +117,7 @@ def animate(*sequences):
                     lines[start_point][i].set_3d_properties(z)
 
     # Create the animation
-    animation = FuncAnimation(fig, update, frames=len(sequences[0]), interval=250, blit=False)
+    animation = FuncAnimation(fig, update, frames=len(sequences[0]), interval=100, blit=False)
 
     plt.close(fig)
     return animation

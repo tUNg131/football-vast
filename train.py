@@ -9,9 +9,12 @@ from pytorch_lightning.loggers import TensorBoardLogger
 
 from transformer import TrainableFootballTransformer
 
+def float_or_int(s):
+    return int(s) if float(s) == int(float(s)) else float(s)
+
 def main(hparams: Namespace) -> None:
     seed_everything(hparams.seed, workers=True)
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision(hparams.torch_matmul_precision)
 
     # Init model and data
     model = TrainableFootballTransformer(hparams)
@@ -145,6 +148,33 @@ if __name__ == "__main__":
         help=("Enable fast development run.")
     )
     parser.add_argument(
+        "--limit-train-batches",
+        type=float_or_int,
+        default=1.0,
+        help=(
+            "How much of training dataset to check."
+            "Useful when debugging or testing something that happens at the end of an epoch."
+        )
+    )
+    parser.add_argument(
+        "--limit-val-batches",
+        type=float_or_int,
+        default=1.0,
+        help=(
+            "How much of eval dataset to check."
+            "Useful when debugging or testing something that happens at the end of an epoch."
+        )
+    )
+    parser.add_argument(
+        "--limit-test-batches",
+        type=float_or_int,
+        default=1.0,
+        help=(
+            "How much of test dataset to check."
+            "Useful when debugging or testing something that happens at the end of an epoch."
+        )
+    )
+    parser.add_argument(
         "--min-epochs",
         default=1,
         type=int,
@@ -181,6 +211,13 @@ if __name__ == "__main__":
         default=None,
         const=True,
         help="CUDNN auto-tuner will try to find the best algorithm for the hardware."
+    )
+    parser.add_argument(
+        "--pytorch-matmul-precision",
+        default="high",
+        type=str,
+        help="Set pytorch float32_matmul_precision",
+        choices=["highest", "high", "medium"]
     )
 
     TrainableFootballTransformer.update_parser_with_model_args(parser)
