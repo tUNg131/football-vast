@@ -6,13 +6,13 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from transformer import FootballTransformer
+from transformer import TrainableFootballTransformer
 
 def main(hparams: Namespace) -> None:
     seed_everything(hparams.seed, workers=True)
 
     # Init model and data
-    model = FootballTransformer(hparams)
+    model = TrainableFootballTransformer(hparams)
 
     # Init early stopping callback
     early_stop_call_back = EarlyStopping(
@@ -176,7 +176,7 @@ if __name__ == "__main__":
         help="CUDNN auto-tuner will try to find the best algorithm for the hardware."
     )
 
-    FootballTransformer.update_parser_with_model_args(parser)
+    TrainableFootballTransformer.update_parser_with_model_args(parser)
     hparams = parser.parse_args()
 
     ######################

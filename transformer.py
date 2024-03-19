@@ -1,6 +1,6 @@
 import os
 from argparse import ArgumentParser, Namespace
-from typing import Tuple, List, Type, Optional, Any, Callable
+from typing import Tuple, Type
 
 import torch
 import pytorch_lightning as pl
@@ -9,86 +9,20 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
 import optimizer
+from model import FootballTransformer
 from dataset import (
-    HumanPoseDataset,
-    AddGeometricInvariantFeatures,
-    SetOriginToJoint,
-    FilterJoints,
-    SetOriginToCenterOfMassAndAlignXY,
+    HumanPoseMidHipDataset,
     DropRandomChunkVariableSize,
     DropRandomUniform,
     DropRandomChunk,
-    AddRandomNoise
+    DEFAULT_JOINT_INDICES
 )
 
 
 DEFAULT_LOADER_WORKER_COUNT = os.cpu_count() - 1
-DEFAULT_JOINT_INDICES = [0, 3, 6, 7, 9, 12, 13, 14, 15, 16, 19, 22, 23, 25, 28]
 
 
-class Embedding(nn.Module):
-
-    def __init__(self, hparams: Namespace) -> None:
-        super().__init__()
-        self.hparams = hparams
-
-        self.linear = nn.Linear(
-            in_features=hparams.d_joint,
-            out_features=hparams.d_model
-        )
-
-        self.time_embedding = nn.Embedding(
-            num_embeddings=hparams.n_timesteps,
-            embedding_dim=hparams.d_model
-        )
-
-        self.joint_embedding = nn.Embedding(
-            num_embeddings=hparams.n_joints,
-            embedding_dim=hparams.d_model
-        )
-
-        self.nan_embedding = nn.Embedding(
-            num_embeddings=2,
-            embedding_dim=hparams.d_model
-        )
-
-        timestep_labels = (
-            torch.arange(hparams.n_timesteps, dtype=torch.int)
-            .view(1, -1, 1)
-            .repeat(hparams.batch_size, 1, hparams.n_joints)
-            .view(hparams.batch_size, -1)
-        )
-        self.register_buffer(
-            "timestep_labels", timestep_labels, persistent=False)
-
-        joint_labels = (
-            torch.arange(hparams.n_joints, dtype=torch.int)
-            .repeat(hparams.batch_size, hparams.n_timesteps)
-        )
-        self.register_buffer(
-            "joint_labels", joint_labels, persistent=False)
-
-    def forward(self, x):
-        time_emb = self.time_embedding(self.timestep_labels)
-
-        joint_emb = self.joint_embedding(self.joint_labels)
-
-        nan_emb = self.nan_embedding(
-            torch.isnan(x)
-            .view(self.hparams.batch_size, -1, self.hparams.d_joint)
-            .any(-1)
-            .int()
-        )
-
-        val_emb = self.linear(
-            torch.nan_to_num(x)
-            .view(self.hparams.batch_size, -1, self.hparams.d_joint)
-        )
-
-        return val_emb + time_emb + joint_emb + nan_emb
-
-
-class FootballTransformer(pl.LightningModule):
+class TrainableFootballTransformer(pl.LightningModule):
 
     class DataModule(pl.LightningDataModule):
 
@@ -98,68 +32,31 @@ class FootballTransformer(pl.LightningModule):
             self.model = model
 
         def setup(self, stage: str) -> None:
-            preprocessing = [
-                FilterJoints(DEFAULT_JOINT_INDICES),
-            ]
-
-            if self.hparams.preprocessing == "midhip":
-                preprocessing += [
-                    SetOriginToJoint(13), # midhip
-                ]
-            elif self.hparams.preprocessing == "com":
-                preprocessing += [
-                    SetOriginToCenterOfMassAndAlignXY(),
-                ]
-            elif self.hparams.preprocessing == "invariant":
-                preprocessing += [
-                    AddGeometricInvariantFeatures()
-                ]
-            elif self.hparams.preprocessing == "none":
-                pass
-
-            transform = []
-            # Training noise
-            if self.hparams.training_noise_std > 0:
-                transform += [
-                    AddRandomNoise(self.hparams.training_noise_std),
-                ]
-
-            # transform += [
-            #     AddGeometricInvariantFeatures()
-            # ]
-
-            # Mask
-            if self.hparams.mask:
-                transform_name = self.hparams.mask[0]
-                if transform_name == "chunk":
-                    t = DropRandomChunk
-                elif transform_name == "vchunk":
-                    t = DropRandomChunkVariableSize
-                elif transform_name == "random":
-                    t = DropRandomUniform
-                args = self.hparams.mask[1:]
-                transform += [
-                    t(*args),
-                ]
-
+            drop_type, *drop_args = self.hparams.masking_strategy
+            if drop_type == "vchunk":
+                drop = DropRandomChunkVariableSize(*drop_args)
+            elif drop_type == "chunk":
+                drop = DropRandomChunk(*drop_args)
+            elif drop_type == "random":
+                drop = DropRandomUniform(*drop_args)
+            else:
+                raise
 
             if stage == "fit":
-                self._train_dataset = HumanPoseDataset(
+                self._train_dataset = HumanPoseMidHipDataset(
                     path=self.hparams.train_path,
-                    preprocessing=preprocessing,
-                    transform=transform,
+                    drop=drop,
+                    noise=self.hparams.training_noise_std,
                 )
 
-                self._val_dataset = HumanPoseDataset(
+                self._val_dataset = HumanPoseMidHipDataset(
                     path=self.hparams.val_path,
-                    preprocessing=preprocessing,
-                    transform=transform,
+                    drop=drop,
                 )
             elif stage == "test":
-                self._test_dataset = HumanPoseDataset(
+                self._test_dataset = HumanPoseMidHipDataset(
                     path=self.hparams.test_path,
-                    preprocessing=preprocessing,
-                    transform=transform,
+                    drop=drop,
                 )
 
         def train_dataloader(self) -> DataLoader:
@@ -202,45 +99,25 @@ class FootballTransformer(pl.LightningModule):
 
     def __build_model(self) -> None:
         """Init the model."""
-        self.embedding = Embedding(self.hparams)
-
-        self.encoder = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(
-                d_model=self.hparams.d_model,
-                nhead=self.hparams.n_heads,
-                dim_feedforward=self.hparams.d_feedforward,
-                dropout=self.hparams.dropout,
-                activation=self.hparams.activation,
-                batch_first=True
-            ),
-            num_layers=self.hparams.n_layers,
-        )
-
-        self.linear = nn.Linear(
-            in_features=self.hparams.d_model,
-            out_features=self.hparams.d_joint
-        )
+        self._model = FootballTransformer(n_timesteps=self.hparams.n_timesteps,
+                                          n_joints=self.hparams.n_joints,
+                                          d_joint=self.hparams.d_joint,
+                                          n_heads=self.hparams.n_heads,
+                                          n_layers=self.hparams.n_layers,
+                                          d_model=self.hparams.d_model,
+                                          d_feedforward=self.hparams.d_feedforward,
+                                          dropout=self.hparams.dropout,
+                                          activation=self.hparams.activation)
 
     def __build_loss(self) -> None:
         """Initializes the loss function/s."""
         self._loss = nn.functional.mse_loss
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.__forward(x)
-
-    def __forward(self, x: Tensor) -> Tensor:
-        embeddings = self.embedding(x)
-        features = self.encoder(embeddings)
-        output = self.linear(features).view(x.shape)
-        return output
+        return self._model(x)
 
     def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
-        inputs = inputs[:, :, :, :3]
-        model_out = model_out[:, :, :, :3]
-        targets = targets[:, :, :, :3]
-
         nan_mask = torch.isnan(inputs)
-
         return self._loss(model_out[nan_mask], targets[nan_mask])
 
     def training_step(self,
@@ -248,7 +125,7 @@ class FootballTransformer(pl.LightningModule):
                       batch_index: int) -> Tensor:
         
         inputs, targets = batch
-        model_out = self.__forward(inputs)
+        model_out = self._model(inputs)
         loss = self.loss(inputs, model_out, targets)
         self.log("train_loss", loss, sync_dist=True)
         return loss
@@ -258,7 +135,7 @@ class FootballTransformer(pl.LightningModule):
                         batch_index: int) -> Tensor:
         
         inputs, targets = batch
-        model_out = self.__forward(inputs)
+        model_out = self._model(inputs)
         loss =  self.loss(inputs, model_out, targets)
         self.log("val_loss", loss, sync_dist=True)
         return loss
@@ -271,7 +148,7 @@ class FootballTransformer(pl.LightningModule):
             optimizer_class = getattr(torch.optim, optimizer_name)
 
         optimizer_obj = optimizer_class(
-            self.parameters(),
+            self._model.parameters(),
             lr=self.hparams.learning_rate
         )
         return optimizer_obj
@@ -287,7 +164,7 @@ class FootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--n-joints",
-            default=14,
+            default=len(DEFAULT_JOINT_INDICES),
             type=int,
             help="# of joints in one timestep."
         )
@@ -379,18 +256,6 @@ class FootballTransformer(pl.LightningModule):
             help="Batch size to be used."
         )
         parser.add_argument(
-            "--preprocessing",
-            default="midhip",
-            type=str,
-            help="midhip, com, invariant, none"
-        )
-        parser.add_argument(
-            "--mask",
-            default=["vchunk", 15],
-            nargs="+",
-            help="Specify masking strategy"
-        )
-        parser.add_argument(
             "--training-noise-std",
             default=0.02,
             type=float,
@@ -398,7 +263,7 @@ class FootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--masking-strategy",
-            default="vchunk15",
-            type=str,
+            default=["vchunk", 15],
+            nargs="+",
             help="Mask strategy. e.g. vchunk15, chunk15, random50.",
         )

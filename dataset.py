@@ -1,5 +1,5 @@
 import random
-from typing import Tuple, List, Callable, Union, Optional
+from typing import Tuple, List, Callable, Optional
 
 import torch
 import h5py
@@ -7,82 +7,8 @@ import numpy as np
 from torch import Tensor
 from torch.utils.data import Dataset
 
-
-class AddGeometricInvariantFeatures:
-    
-    def __call__(self, sample: Tensor) -> Tensor:
-        velocity = sample[1:] - sample[:-1]
-
-        velocity_magnitude = torch.norm(velocity[1:] + velocity[:-1], dim=2, keepdim=True) / 2
-        omega = torch.arccos(torch.sum(velocity[1:] * velocity[:-1], dim=2, keepdim=True) / (
-            torch.norm(velocity[1:], dim=2, keepdim=True) *
-            torch.norm(velocity[:-1], dim=2, keepdim=True)
-        ))
-
-        return torch.cat((sample[1:-1], velocity_magnitude, omega), dim=2)
-
-
-class SetOriginToJoint:
-
-    def __init__(self, joint: int) -> None:
-        self.joint = joint
-
-    def __call__(self, sample: Tensor) -> Tensor:
-        data_without_joint = torch.cat((sample[:, :self.joint], sample[:, self.joint+1:]),
-                                       dim=1)
-        joint = sample[:, self.joint]
-        return data_without_joint - joint.unsqueeze(1)
-
-
-class FilterJoints:
-
-    def __init__(self, included: List[int]) -> None:
-        self.included = included
-    
-    def __call__(self, sample: Tensor) -> Tensor:
-        return sample[:, self.included]
-
-
-class SetOriginToCenterOfMassAndAlignXY:
-
-    def __call__(self, sample: Tensor) -> Tensor:
-        # Rotation matrix
-        direction = self.direction(sample)
-        sin = direction[1]
-        cos = direction[0]
-        rot = torch.tensor([[sin + cos, cos - sin, 0],
-                            [sin - cos, cos + sin, 0],
-                            [0, 0, 1]])
-
-        # Translate to set the orgin to center of mass
-        sample = sample - self.centroids_mean(sample)
-
-        # Rotate to the x-y line
-        sample = torch.matmul(sample, rot)
-        return sample
-
-    @staticmethod
-    def centroids_mean(sample: Tensor) -> Tensor: 
-        return sample - sample[:, -1].mean(dim=0)
-
-    @staticmethod
-    def direction(sample: Tensor) -> Tensor:
-        first = sample[0, -1]
-        last = sample[-1, -1]
-
-        direction = last - first
-        normalised_direction = direction / torch.norm(direction)
-        return normalised_direction
-
-
-class AddRandomNoise:
-
-    def __init__(self, std: float) -> None:
-        self.std = std
-
-    def __call__(self, sample: Tensor) -> Tensor:
-        noise = self.std * torch.randn_like(sample)
-        return noise + sample
+DEFAULT_JOINT_INDICES = [0, 3, 6, 7, 9, 12, 14, 15, 16, 19, 22, 23, 25, 28]
+MIDHIP_INDEX = 13
 
 
 class DropRandomUniform:
@@ -117,16 +43,18 @@ class DropRandomChunkVariableSize(DropRandomChunk):
         return random.randint(1, self.chunk_size)
 
 
-class HumanPoseDataset(Dataset):
-    __included_joint_indices__ = [0, 3, 6, 7, 9, 12, 13, 14, 15, 16, 19, 22, 23, 25, 28]
+class HumanPoseMidHipDataset(Dataset):
 
     def __init__(self,
                  path: str,
-                 preprocessing: Optional[Union[Callable, List[Callable]]] = [],
-                 transform: Optional[Union[Callable, List[Callable]]] = []) -> None:
+                 drop: Callable[[Tensor], Tensor],
+                 noise: Optional[float] = 0.0,
+                 joints: Optional[List[int]] = DEFAULT_JOINT_INDICES):
+        
         self.path = path
-        self.preprocessing = preprocessing
-        self.transform = transform
+        self.noise = noise
+        self.joints = joints
+        self.drop = drop
 
         with h5py.File(path, "r") as f:
             ds = f['data']
@@ -136,22 +64,21 @@ class HumanPoseDataset(Dataset):
     def __getitem__(self, index) -> Tuple[Tensor, Tensor]:
         raw = torch.from_numpy(self._data[index])
 
-        if callable(self.preprocessing):
-            clean = self.preprocessing(raw)
-        else:
-            for p in self.preprocessing:
-                raw = p(raw)
-            clean = raw
-        target = clean.clone()
+        # Excluded joints & subtract midhip
+        sample = raw[:, self.joints] - raw[:, MIDHIP_INDEX].unsqueeze(1)
 
-        if callable(self.transform):
-            sample = self.transform(clean)
-        else:
-            for t in self.transform:
-                clean = t(clean)
-            sample = clean
+        target = sample.clone()
+        
+        # Add noise to sample
+        sample = sample + self.noise * torch.randn_like(sample)
 
-        return sample, target
+        # Randomly masking
+        sample = self.drop(sample)
 
+        return (
+            sample.view(-1, sample.size(-1)),
+            target.view(-1, target.size(-1))
+        )
+    
     def __len__(self) -> int:
         return len(self._data)
