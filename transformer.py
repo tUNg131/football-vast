@@ -53,12 +53,12 @@ class TrainableFootballTransformer(pl.LightningModule):
 
                 self._val_dataset = HumanPoseMidHipDataset(
                     path=self.hparams.val_path,
-                    drop=drop,
+                    drop=DropRandomChunk(15),
                 )
             elif stage == "test":
                 self._test_dataset = HumanPoseMidHipDataset(
                     path=self.hparams.test_path,
-                    drop=drop,
+                    drop=DropRandomChunk(15),
                 )
 
         def train_dataloader(self) -> DataLoader:
