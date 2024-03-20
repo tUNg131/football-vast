@@ -132,7 +132,7 @@ class TrainableFootballTransformer(pl.LightningModule):
 
         for i, (s, e) in enumerate(zip(start, end)):
             gap_size = e - s - 1
-            weights = torch.linspace(0, 1, gap_size + 2)[1:-1]
+            weights = torch.linspace(0, 1, gap_size + 2, device=self.device)[1:-1]
             x[i, s + 1:e] = torch.lerp(x[i, s:s+1].expand(gap_size, -1, -1),
                                        x[i, e:e+1].expand(gap_size, -1, -1),
                                        weights.view(-1, 1, 1))
