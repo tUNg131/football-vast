@@ -1,6 +1,7 @@
 import os
+import time
 from argparse import ArgumentParser, Namespace
-from typing import Tuple, Type
+from typing import Tuple, Type, Optional
 from collections import defaultdict
 
 import torch
@@ -53,12 +54,7 @@ class TrainableFootballTransformer(pl.LightningModule):
 
                 self._val_dataset = HumanPoseMidHipDataset(
                     path=self.hparams.val_path,
-                    drop=DropRandomChunk(15),
-                )
-            elif stage == "test":
-                self._test_dataset = HumanPoseMidHipDataset(
-                    path=self.hparams.test_path,
-                    drop=DropRandomChunk(15),
+                    drop=drop,
                 )
 
         def train_dataloader(self) -> DataLoader:
@@ -72,16 +68,23 @@ class TrainableFootballTransformer(pl.LightningModule):
         def val_dataloader(self) -> DataLoader:
             """Function that loads the validation set."""
             return DataLoader(dataset=self._val_dataset,
+                              shuffle=False,
                               batch_size=self.hparams.batch_size,
                               num_workers=self.hparams.loader_workers,
                               pin_memory=self.model.on_gpu)
 
-        def test_dataloader(self) -> DataLoader:
-            """Function that loads the test set."""
-            return DataLoader(dataset=self._test_dataset,
-                              batch_size=self.hparams.batch_size,
-                              num_workers=self.hparams.loader_workers,
-                              pin_memory=self.model.on_gpu)
+        def get_test_dataloader(self, gap_size) -> DataLoader:
+            dataset = HumanPoseMidHipDataset(
+                path=self.hparams.test_path,
+                drop=DropRandomChunk(gap_size),
+            )
+            return DataLoader(
+                dataset=dataset,
+                shuffle=False,
+                batch_size=self.hparams.batch_size,
+                num_workers=self.hparams.loader_workers,
+                pin_memory=self.model.on_gpu
+            )
 
     def __init__(self, hparams: Namespace) -> None:
         super().__init__()
@@ -114,6 +117,30 @@ class TrainableFootballTransformer(pl.LightningModule):
 
     def forward(self, x: Tensor) -> Tensor:
         return self._model(x)
+    
+    def fill_nan_by_interpolating(self, x: Tensor) -> Tensor:
+        x = x.clone()
+        x = x.view(-1,
+                   self.hparams.n_timesteps,
+                   self.hparams.n_joints,
+                   self.hparams.d_joint)
+
+        nan_mask = torch.flatten(torch.isnan(x), start_dim=2).any(dim=2).float()
+
+        start = nan_mask.argmax(dim=1) - 1
+        end = x.size(dim=1) - nan_mask.flip(dims=(1,)).argmax(dim=1)
+
+        for i, (s, e) in enumerate(zip(start, end)):
+            gap_size = e - s - 1
+            weights = torch.linspace(0, 1, gap_size + 2)[1:-1]
+            x[i, s + 1:e] = torch.lerp(x[i, s:s+1].expand(gap_size, -1, -1),
+                                       x[i, e:e+1].expand(gap_size, -1, -1),
+                                       weights.view(-1, 1, 1))
+        
+        x = x.view(-1,
+                   self.hparams.n_timesteps * self.hparams.n_joints,
+                   self.hparams.d_joint)
+        return x
 
     def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
         nan_position = torch.isnan(inputs)
@@ -140,40 +167,94 @@ class TrainableFootballTransformer(pl.LightningModule):
         return loss
     
     def on_test_epoch_start(self) -> None:
-        self.test_loss = defaultdict(list)
+        # Initialize test losses at the start of each epoch
+        self.model_losses = defaultdict(list)
+        self.baseline_losses = defaultdict(list)
 
     def test_step(self,
                   batch: Tuple[Tensor, Tensor],
-                  batch_index: int) -> Tensor:
+                  batch_index: int,
+                  dataloader_idx: Optional[int] = 0) -> None:
+        """
+        Performs a single test step.
         
+        Args:
+            batch (Tuple[Tensor, Tensor]): A tuple containing input and target tensors.
+            batch_index (int): Index of the current batch.
+        """
+        model_losses = self.model_losses[f"d{dataloader_idx}"]
+        baseline_losses = self.baseline_losses[f"d{dataloader_idx}"]
+
         inputs, targets = batch
-        model_out = self._model(inputs)
+        batch_size, *_ = inputs.shape
 
         nan_position = torch.isnan(inputs)
+        model_output = self._model(inputs)
+        baseline_output = self.fill_nan_by_interpolating(inputs)
 
-        loss = self._loss(model_out[nan_position],
-                          targets[nan_position],
-                          reduction='none').cpu()
+        # Compute loss for NaN positions
+        model_loss = (
+            self
+            ._loss(model_output[nan_position], targets[nan_position], reduction='none')
+            .view(batch_size, -1, self.hparams.n_joints, self.hparams.d_joint)
+        )
+        baseline_loss = (
+            self
+            ._loss(baseline_output[nan_position], targets[nan_position], reduction='none')
+            .view(batch_size, -1, self.hparams.n_joints, self.hparams.d_joint)
+        )
 
-        nan_count = torch.sum(nan_position, dim=(1, 2)) // \
-            (self.hparams.n_joints * self.hparams.d_joint)
-        start = 0
-        for gap_size in nan_count:
-            self.test_loss[gap_size].append(
-                loss[start:start+gap_size]
-            )
-            start += gap_size
+        model_losses.append(model_loss)
+        baseline_losses.append(baseline_loss)
 
     def on_test_epoch_end(self) -> None:
-        for gap_size, losses in self.test_loss.items():
-            l = torch.stack(losses).mean(dim=0)
+        """
+        Performs actions at the end of each test epoch.
+        """
+
+        for key in self.model_losses:
+            model_losses = self.model_losses[key]
+            baseline_losses = self.baseline_losses[key]
+
+            model_loss_avg = (
+                torch.cat(model_losses, dim=0)
+                .mean(dim=(0, 2, 3), keepdim=False)
+            )
+
+            baseline_loss_avg = (
+                torch.cat(baseline_losses, dim=0)
+                .mean(dim=(0, 2, 3), keepdim=False)
+            )
+
+            # Determine the gap size
+            total_timesteps = model_loss_avg.size(0)
+
+            timesteps = range(1, total_timesteps + 1)
+
+            # Plotting MSE for gap size
             plt.ylabel("MSE")
-            plt.plot(range(1, gap_size + 1), l, label=f"Gap size = {gap_size}")
-            plt.title(f"MSE for gap size = {gap_size}")
+            plt.xlabel("Timesteps")
+            
+            plt.plot(timesteps,
+                    model_loss_avg,
+                    label=f"Model loss",
+                    marker='o',
+                    linestyle='none')
+            plt.plot(timesteps,
+                    baseline_loss_avg,
+                    label=f"Interpolation loss",
+                    marker='o',
+                    linestyle='none')
+            
+            plt.title(f"MSE for gap size = {total_timesteps}")
+            plt.legend()
 
-            self.logger.experiment.add_figure(f"Loss/gapsize = {gap_size}", plt.gcf())
+            # Add the plot to TensorBoard
+            self.logger.experiment.add_figure(f"Loss/gapsize = {total_timesteps}", plt.gcf())
 
-        self.test_loss.clear()
+        # Clear the test losses for the next epoch
+        self.model_losses.clear()
+        self.baseline_losses.clear()
  
     def configure_optimizers(self) -> Optimizer:
         optimizer_name = self.hparams.optimizer

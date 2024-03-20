@@ -75,11 +75,15 @@ def main(hparams: Namespace) -> None:
     # Start training
     trainer.fit(model=model, datamodule=model.datamodule)
 
-
     # Start testing
-    trainer.test(ckpt_path="best",
-                 datamodule=model.datamodule,
-                 verbose=True)
+    trainer.test(
+        ckpt_path="best",
+        dataloaders=[
+            model.datamodule.get_test_dataloader(gs)
+            for gs in range(1, 16)
+        ],
+        verbose=True,
+    )
 
 
 if __name__ == "__main__":
