@@ -219,11 +219,13 @@ class TrainableFootballTransformer(pl.LightningModule):
             model_loss_avg = (
                 torch.cat(model_losses, dim=0)
                 .mean(dim=(0, 2, 3), keepdim=False)
+                .cpu()
             )
 
             baseline_loss_avg = (
                 torch.cat(baseline_losses, dim=0)
                 .mean(dim=(0, 2, 3), keepdim=False)
+                .cpu()
             )
 
             # Determine the gap size
