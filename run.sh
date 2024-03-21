@@ -2,7 +2,7 @@ python train.py \
     --benchmark \
     --masking-strategy vchunk 15 \
     --precision 16-mixed \
-    --train-noise-std 0.05 \
+    --training-noise-std 0.05 \
     --min-epochs 15 \
     --max-epochs 20 \
     --train-path /workspace/data/train.hdf5 \
