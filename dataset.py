@@ -43,8 +43,7 @@ class DropRandomChunkVariableSize(DropRandomChunk):
         return random.randint(1, self.chunk_size)
 
 
-class HumanPoseMidHipDataset(Dataset):
-
+class HumanPoseDataset(Dataset):
     def __init__(self,
                  path: str,
                  drop: Callable[[Tensor], Tensor],
@@ -60,6 +59,12 @@ class HumanPoseMidHipDataset(Dataset):
             ds = f['data']
             self._data = np.empty(ds.shape, dtype=ds.dtype)
             ds.read_direct(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+    
+
+class HumanPoseMidHipDataset(HumanPoseDataset):
 
     def __getitem__(self, index) -> Tuple[Tensor, Tensor]:
         raw = torch.from_numpy(self._data[index])
@@ -79,6 +84,25 @@ class HumanPoseMidHipDataset(Dataset):
             sample.view(-1, sample.size(-1)),
             target.view(-1, target.size(-1))
         )
-    
-    def __len__(self) -> int:
-        return len(self._data)
+
+
+class HumanPoseMidHipDatasetWithGeometricInvariantFeatures(HumanPoseDataset):
+
+    def __getitem__(self, index) -> Tuple[Tensor, Tensor]:
+        raw = torch.from_numpy(self._data[index])
+
+        # Excluded joints & subtract midhip
+        sample = raw[:, self.joints] - raw[:, MIDHIP_INDEX].unsqueeze(1)
+
+        target = sample.clone()
+        
+        # Add noise to sample
+        sample = sample + self.noise * torch.randn_like(sample)
+
+        # Randomly masking
+        sample = self.drop(sample)
+
+        return (
+            sample.view(-1, sample.size(-1)),
+            target.view(-1, target.size(-1))
+        )

@@ -1,5 +1,4 @@
 import os
-import time
 from argparse import ArgumentParser, Namespace
 from typing import Tuple, Type, Optional
 from collections import defaultdict
