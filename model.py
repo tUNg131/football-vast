@@ -82,9 +82,17 @@ class FootballTransformer(nn.Module):
 
         self.linear = nn.Linear(in_features=d_model,
                                 out_features=d_joint)
+        
+        self.n_timesteps = n_timesteps
+        self.n_joints = n_joints
+        self.d_joint = d_joint
 
     def forward(self, x: Tensor) -> Tensor:
+        x = x.view(-1, self.n_timesteps * self.n_joints, self.d_joint)
+
         embed = self.embedding(x)
         feature = self.encoder(embed)
         output = self.linear(feature)
+
+        output = output.view(-1, self.n_timesteps, self.n_joints, self.d_joint)
         return output

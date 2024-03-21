@@ -1,9 +1,10 @@
 import os
 from argparse import ArgumentParser, Namespace
-from typing import Tuple, Type, Optional
+from typing import Tuple, Type, Optional, Literal
 from collections import defaultdict
 
 import torch
+import numpy as np
 import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 from torch import nn, Tensor
@@ -115,31 +116,94 @@ class TrainableFootballTransformer(pl.LightningModule):
         self._loss = nn.functional.mse_loss
 
     def forward(self, x: Tensor) -> Tensor:
+        return self.__predict_all(x)
+    
+    def __nan_mask(self, x: Tensor) -> Tensor:
+        hparams = self.hparams
+        return (
+            x
+            .isnan()
+            .view(-1, hparams.n_timesteps, hparams.n_joints * hparams.d_joint)
+            .any(dim=(2,))
+        )
+    
+    def __nan_start_end_timesteps(self, x: Tensor) -> Tensor:
+        hparams = self.hparams
+
+        # Find positions of NaN values
+        nan_positions = self.__nan_mask(x).float()
+
+        # Find the first and last NaN positions
+        start_nan = nan_positions.argmax(dim=1)
+        end_nan = hparams.n_timesteps - nan_positions.flip(dims=(1,)).argmax(dim=1) - 1
+
+        return start_nan, end_nan
+    
+    def __predict_all(self, x: Tensor) -> Tensor:
+        # Predict all timesteps
         return self._model(x)
     
-    def fill_nan_by_interpolating(self, x: Tensor) -> Tensor:
-        x = x.clone()
-        x = x.view(-1,
-                   self.hparams.n_timesteps,
-                   self.hparams.n_joints,
-                   self.hparams.d_joint)
+    def __predict_interpolate(self, x: Tensor) -> Tensor:
+        # Predict all timesteps using interpolation
+        device = self.device
+        batch_size, *_ = x.shape
+        out = x.clone()
 
-        nan_mask = torch.flatten(torch.isnan(x), start_dim=2).any(dim=2).float()
+        s, e = self.__nan_start_end_timesteps(x)
+        missing_timesteps_count = e[0] - s[0] + 1
+        weights = (
+            torch
+            .linspace(0, 1, missing_timesteps_count + 2, device=device)
+            [1:-1]
+            .view(-1, 1, 1, 1)
+            .repeat(1, batch_size, self.hparams.n_joints, self.hparams.d_joint)
+        )
 
-        start = nan_mask.argmax(dim=1) - 1
-        end = x.size(dim=1) - nan_mask.flip(dims=(1,)).argmax(dim=1)
-
-        for i, (s, e) in enumerate(zip(start, end)):
-            gap_size = e - s - 1
-            weights = torch.linspace(0, 1, gap_size + 2, device=self.device)[1:-1]
-            x[i, s + 1:e] = torch.lerp(x[i, s:s+1].expand(gap_size, -1, -1),
-                                       x[i, e:e+1].expand(gap_size, -1, -1),
-                                       weights.view(-1, 1, 1))
+        a = torch.arange(batch_size)
+        b = a.unsqueeze(-1)
+        c = torch.stack(
+            [torch.arange(s_, e_ + 1) for s_, e_ in zip(s, e)],
+            dim=0
+        )
         
-        x = x.view(-1,
-                   self.hparams.n_timesteps * self.hparams.n_joints,
-                   self.hparams.d_joint)
-        return x
+        interpolated = (
+            torch
+            .lerp(out[a, s - 1], out[a, e + 1], weights)
+            .transpose(0, 1)
+        )
+        out[b, c] = interpolated
+        
+        return out
+    
+    def __predict_rollout(self,
+                          x: Tensor,
+                          strategy: Optional[Literal["both", "left", "right"]] = "both"
+                          ) -> Tensor:
+        batch_size, *_ = x.shape
+        out = x.clone()
+
+        # Check if all batches have the same number of missing timesteps
+        missing_timesteps_count = self.__nan_mask(x).sum(dim=1)
+        if not torch.all(missing_timesteps_count == missing_timesteps_count[0]):
+            raise RuntimeError("Samples in the batch have different # of missing timesteps.")
+        
+        # Iterate until all NaN values are replaced
+        while out.isnan().any():
+            tmp = self._model(out)
+
+            s, e = self.__nan_start_end_timesteps(out)
+
+            # Replace NaN values with corresponding output values
+            i = torch.arange(batch_size)
+            if strategy == "left":
+                out[i, s] = tmp[i, s]
+            elif strategy == "right":
+                out[i, e] = tmp[i, e]
+            elif strategy == "both":
+                out[i, s] = tmp[i, s]
+                out[i, e] = tmp[i, e]
+            
+        return out
 
     def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
         nan_position = torch.isnan(inputs)
@@ -168,7 +232,7 @@ class TrainableFootballTransformer(pl.LightningModule):
     def on_test_epoch_start(self) -> None:
         # Initialize test losses at the start of each epoch
         self.model_losses = defaultdict(list)
-        self.baseline_losses = defaultdict(list)
+        self.loss_labels = ["All", "Outside in", "Left to right", "Right to left", "Interpolation"]
 
     def test_step(self,
                   batch: Tuple[Tensor, Tensor],
@@ -182,80 +246,77 @@ class TrainableFootballTransformer(pl.LightningModule):
             batch_index (int): Index of the current batch.
         """
         model_losses = self.model_losses[f"d{dataloader_idx}"]
-        baseline_losses = self.baseline_losses[f"d{dataloader_idx}"]
 
         inputs, targets = batch
         batch_size, *_ = inputs.shape
 
         nan_position = torch.isnan(inputs)
-        model_output = self._model(inputs)
-        baseline_output = self.fill_nan_by_interpolating(inputs)
+
+        # Compute outputs
+        model_output = torch.stack([
+            self.__predict_all(inputs),
+            self.__predict_rollout(inputs, "both"),
+            self.__predict_rollout(inputs, "left"),
+            self.__predict_rollout(inputs, "right"),
+            self.__predict_interpolate(inputs)
+        ])
 
         # Compute loss for NaN positions
+        strategy_count = model_output.size(0)
+        o = model_output[:, nan_position]
+        t = targets[nan_position].repeat(strategy_count, 1)
+
         model_loss = (
             self
-            ._loss(model_output[nan_position], targets[nan_position], reduction='none')
-            .view(batch_size, -1, self.hparams.n_joints, self.hparams.d_joint)
-        )
-        baseline_loss = (
-            self
-            ._loss(baseline_output[nan_position], targets[nan_position], reduction='none')
-            .view(batch_size, -1, self.hparams.n_joints, self.hparams.d_joint)
+            ._loss(o, t, reduction='none')
+            .view(strategy_count, batch_size, -1, self.hparams.n_joints, self.hparams.d_joint)
         )
 
         model_losses.append(model_loss)
-        baseline_losses.append(baseline_loss)
 
     def on_test_epoch_end(self) -> None:
         """
         Performs actions at the end of each test epoch.
         """
 
-        for key in self.model_losses:
-            model_losses = self.model_losses[key]
-            baseline_losses = self.baseline_losses[key]
-
-            model_loss_avg = (
-                torch.cat(model_losses, dim=0)
-                .mean(dim=(0, 2, 3), keepdim=False)
+        for model_loss in self.model_losses.values():
+            np_model_loss_avg = (
+                torch.cat(model_loss, dim=1)
+                .mean(dim=(1, 3, 4), keepdim=False)
                 .cpu()
+                .numpy()
             )
 
-            baseline_loss_avg = (
-                torch.cat(baseline_losses, dim=0)
-                .mean(dim=(0, 2, 3), keepdim=False)
-                .cpu()
-            )
+            missing_timesteps_count = np_model_loss_avg.shape[1]
+            x = np.arange(missing_timesteps_count)
+            width = 0.15
+            multiplier = 0
 
-            # Determine the gap size
-            total_timesteps = model_loss_avg.size(0)
+            plt.figure(figsize=(10, 20))
 
-            timesteps = range(1, total_timesteps + 1)
+            for label, loss in zip(self.loss_labels, np_model_loss_avg):
+                offset = width * multiplier
 
-            # Plotting MSE for gap size
-            plt.ylabel("MSE")
-            plt.xlabel("Timesteps")
+                rects = plt.barh(x + offset, loss, width, label=label)
+                plt.bar_label(rects, padding=3)
+
+                multiplier += 1
+
+            plt.xlabel("MSE")
+            plt.ylim(-1, 16)
+            plt.ylabel("Timesteps")
+            plt.gca().invert_yaxis()
+            plt.yticks(x + width * len(self.loss_labels) / 2, x)
+            plt.title(f"MSE by strategies (gap size = {missing_timesteps_count})")
+            plt.legend(loc="upper right",
+                       ncols=len(self.loss_labels))
             
-            plt.plot(timesteps,
-                    model_loss_avg,
-                    label=f"Model loss",
-                    marker='o',
-                    linestyle='none')
-            plt.plot(timesteps,
-                    baseline_loss_avg,
-                    label=f"Interpolation loss",
-                    marker='o',
-                    linestyle='none')
-            
-            plt.title(f"MSE for gap size = {total_timesteps}")
-            plt.legend()
-
             # Add the plot to TensorBoard
-            self.logger.experiment.add_figure(f"Loss/gapsize = {total_timesteps}", plt.gcf())
+            self.logger.experiment.add_figure(f"Loss/gapsize = {missing_timesteps_count}", plt.gcf())
 
         # Clear the test losses for the next epoch
         self.model_losses.clear()
-        self.baseline_losses.clear()
+        self.loss_labels.clear()
  
     def configure_optimizers(self) -> Optimizer:
         optimizer_name = self.hparams.optimizer

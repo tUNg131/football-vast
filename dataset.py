@@ -80,10 +80,7 @@ class HumanPoseMidHipDataset(HumanPoseDataset):
         # Randomly masking
         sample = self.drop(sample)
 
-        return (
-            sample.view(-1, sample.size(-1)),
-            target.view(-1, target.size(-1))
-        )
+        return sample, target
 
 
 class HumanPoseMidHipDatasetWithGeometricInvariantFeatures(HumanPoseDataset):
@@ -102,7 +99,4 @@ class HumanPoseMidHipDatasetWithGeometricInvariantFeatures(HumanPoseDataset):
         # Randomly masking
         sample = self.drop(sample)
 
-        return (
-            sample.view(-1, sample.size(-1)),
-            target.view(-1, target.size(-1))
-        )
+        return sample, target
