@@ -26,7 +26,7 @@ class DropRandomUniform:
 class DropRandomChunk:
 
     def __init__(self, chunk_size: int) -> None:
-        self.chunk_size = chunk_size
+        self.chunk_size = int(chunk_size)
 
     def get_chunk_size(self) -> int:
         return self.chunk_size
