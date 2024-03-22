@@ -61,7 +61,7 @@ class TrainableFootballTransformer(pl.LightningModule):
             """Function that loads the train set."""
             return DataLoader(dataset=self._train_dataset,
                               shuffle=True,
-                              batch_size=self.hparams.batch_size,
+                              batch_size=self.hparams.train_batch_size,
                               num_workers=self.hparams.loader_workers,
                               pin_memory=self.model.on_gpu)
 
@@ -69,7 +69,7 @@ class TrainableFootballTransformer(pl.LightningModule):
             """Function that loads the validation set."""
             return DataLoader(dataset=self._val_dataset,
                               shuffle=False,
-                              batch_size=self.hparams.batch_size,
+                              batch_size=self.hparams.val_batch_size,
                               num_workers=self.hparams.loader_workers,
                               pin_memory=self.model.on_gpu)
 
@@ -81,7 +81,7 @@ class TrainableFootballTransformer(pl.LightningModule):
             return DataLoader(
                 dataset=dataset,
                 shuffle=False,
-                batch_size=self.hparams.batch_size,
+                batch_size=self.hparams.val_batch_size,
                 num_workers=self.hparams.loader_workers,
                 pin_memory=self.model.on_gpu
             )
@@ -189,7 +189,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         
         # Iterate until all NaN values are replaced
         while out.isnan().any():
-            tmp = self._model(out)
+            tmp = self._model(out).to(out.dtype)
 
             s, e = self.__nan_start_end_timesteps(out)
 
@@ -428,8 +428,14 @@ class TrainableFootballTransformer(pl.LightningModule):
             help="Path to the file containing the test data."
         )
         parser.add_argument(
-            "--batch-size",
-            default=128,
+            "--train-batch-size",
+            default=168,
+            type=int,
+            help="Batch size to be used."
+        )
+        parser.add_argument(
+            "--val-batch-size",
+            default=1024,
             type=int,
             help="Batch size to be used."
         )

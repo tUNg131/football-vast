@@ -8,7 +8,8 @@ python train.py \
     --train-path /workspace/data/train.hdf5 \
     --val-path /workspace/data/val.hdf5 \
     --test-path /workspace/data/test.hdf5 \
-    --batch-size 168
+    --train-batch-size 168 \
+    --val-batch-size 1024
 
 python train.py \
     --benchmark \
@@ -20,5 +21,5 @@ python train.py \
     --train-path /workspace/data/train.hdf5 \
     --val-path /workspace/data/val.hdf5 \
     --test-path /workspace/data/test.hdf5 \
-    --batch-size 168
-
+    --train-batch-size 168 \
+    --val-batch-size 1024
