@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 import optimizer
 from model import FootballTransformer
 from dataset import (
-    HumanPoseMidHipDataset,
+    HumanPoseMidHipDatasetWithGeometricInvariantFeatures,
     DropRandomChunkVariableSize,
     DropRandomUniform,
     DropRandomChunk,
@@ -28,6 +28,7 @@ DEFAULT_LOADER_WORKER_COUNT = os.cpu_count() - 1
 class TrainableFootballTransformer(pl.LightningModule):
 
     class DataModule(pl.LightningDataModule):
+        __dataset_class__  = HumanPoseMidHipDatasetWithGeometricInvariantFeatures
 
         def __init__(self, model: Type[pl.LightningModule]) -> None:
             super().__init__()
@@ -46,13 +47,13 @@ class TrainableFootballTransformer(pl.LightningModule):
                 raise
 
             if stage == "fit":
-                self._train_dataset = HumanPoseMidHipDataset(
+                self._train_dataset = self.__dataset_class__(
                     path=self.hparams.train_path,
                     drop=drop,
                     noise=self.hparams.training_noise_std,
                 )
 
-                self._val_dataset = HumanPoseMidHipDataset(
+                self._val_dataset = self.__dataset_class__(
                     path=self.hparams.val_path,
                     drop=drop,
                 )
@@ -74,7 +75,7 @@ class TrainableFootballTransformer(pl.LightningModule):
                               pin_memory=self.model.on_gpu)
 
         def get_test_dataloader(self, gap_size) -> DataLoader:
-            dataset = HumanPoseMidHipDataset(
+            dataset = self.__dataset_class__(
                 path=self.hparams.test_path,
                 drop=DropRandomChunk(gap_size),
             )
