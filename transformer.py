@@ -104,14 +104,14 @@ class TrainableFootballTransformer(pl.LightningModule):
         """Init the model."""
         self._model = FootballTransformer(n_timesteps=self.hparams.n_timesteps,
                                           n_joints=self.hparams.n_joints,
-                                          d_joint=self.hparams.d_joint,
+                                          d_in=self.hparams.d_in,
+                                          d_out=self.hparams.d_out,
                                           n_heads=self.hparams.n_heads,
                                           n_layers=self.hparams.n_layers,
                                           d_model=self.hparams.d_model,
                                           d_feedforward=self.hparams.d_feedforward,
                                           dropout=self.hparams.dropout,
                                           activation=self.hparams.activation)
-
     def __build_loss(self) -> None:
         """Initializes the loss function/s."""
         self._loss = nn.functional.mse_loss
@@ -124,7 +124,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         return (
             x
             .isnan()
-            .view(-1, hparams.n_timesteps, hparams.n_joints * hparams.d_joint)
+            .view(-1, hparams.n_timesteps, hparams.n_joints * hparams.d_in)
             .any(dim=(2,))
         )
     
@@ -157,7 +157,7 @@ class TrainableFootballTransformer(pl.LightningModule):
             .linspace(0, 1, missing_timesteps_count + 2, device=device)
             [1:-1]
             .view(-1, 1, 1, 1)
-            .repeat(1, batch_size, self.hparams.n_joints, self.hparams.d_joint)
+            .repeat(1, batch_size, self.hparams.n_joints, self.hparams.d_in)
         )
 
         a = torch.arange(batch_size)
@@ -270,7 +270,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         model_loss = (
             self
             ._loss(o, t, reduction='none')
-            .view(strategy_count, batch_size, -1, self.hparams.n_joints, self.hparams.d_joint)
+            .view(strategy_count, batch_size, -1, self.hparams.n_joints, self.hparams.d_in)
         )
 
         model_losses.append(model_loss)
@@ -348,10 +348,10 @@ class TrainableFootballTransformer(pl.LightningModule):
             help="# of joints in one timestep."
         )
         parser.add_argument(
-            "--d-joint",
+            "--d-in",
             default=3,
             type=int,
-            help="Dimension of one joint."
+            help="Dimension of input tokens."
         )
         parser.add_argument(
             "--n-heads",
@@ -388,6 +388,12 @@ class TrainableFootballTransformer(pl.LightningModule):
             default="relu",
             type=str,
             help="The activation function of the layers"
+        )
+        parser.add_argument(
+            "--d-out",
+            default=3,
+            type=int,
+            help="Dimension of output tokens."
         )
         parser.add_argument(
             "--learning-rate",

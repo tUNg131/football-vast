@@ -7,11 +7,11 @@ class Embedding(nn.Module):
     def __init__(self,
                  n_timesteps: int,
                  n_joints: int,
-                 d_joint: int,
+                 d_in: int,
                  d_model: int) -> None:
         super().__init__()
 
-        self.linear = nn.Linear(in_features=d_joint,
+        self.linear = nn.Linear(in_features=d_in,
                                 out_features=d_model)
 
         self.time_embedding = nn.Embedding(num_embeddings=n_timesteps,
@@ -54,7 +54,8 @@ class FootballTransformer(nn.Module):
     def __init__(self,
                  n_timesteps: int,
                  n_joints: int,
-                 d_joint: int,
+                 d_in: int,
+                 d_out: int,
                  n_heads: int,
                  n_layers: int,
                  d_model: int,
@@ -65,7 +66,7 @@ class FootballTransformer(nn.Module):
 
         self.embedding = Embedding(n_timesteps=n_timesteps,
                                    n_joints=n_joints,
-                                   d_joint=d_joint,
+                                   d_in=d_in,
                                    d_model=d_model)
         
         self.encoder = nn.TransformerEncoder(
@@ -81,18 +82,19 @@ class FootballTransformer(nn.Module):
         )
 
         self.linear = nn.Linear(in_features=d_model,
-                                out_features=d_joint)
+                                out_features=d_out)
         
         self.n_timesteps = n_timesteps
         self.n_joints = n_joints
-        self.d_joint = d_joint
+        self.d_in = d_in
+        self.d_out = d_out
 
     def forward(self, x: Tensor) -> Tensor:
-        x = x.view(-1, self.n_timesteps * self.n_joints, self.d_joint)
+        x = x.view(-1, self.n_timesteps * self.n_joints, self.d_in)
 
         embed = self.embedding(x)
         feature = self.encoder(embed)
         output = self.linear(feature)
 
-        output = output.view(-1, self.n_timesteps, self.n_joints, self.d_joint)
+        output = output.view(-1, self.n_timesteps, self.n_joints, self.d_out)
         return output
