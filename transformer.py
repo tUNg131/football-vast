@@ -303,7 +303,7 @@ class TrainableFootballTransformer(pl.LightningModule):
                 multiplier += 1
 
             plt.xlabel("MSE")
-            plt.ylim(-1, 16)
+            plt.ylim(-1, 15)
             plt.ylabel("Timesteps")
             plt.gca().invert_yaxis()
             plt.yticks(x + width * len(self.loss_labels) / 2, x)
@@ -435,7 +435,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--val-batch-size",
-            default=1024,
+            default=1536,
             type=int,
             help="Batch size to be used."
         )
