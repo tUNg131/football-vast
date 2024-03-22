@@ -207,7 +207,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         return out
 
     def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
-        nan_position = torch.isnan(inputs)
+        nan_position = self.__nan_mask(inputs)
         return self._loss(model_out[nan_position], targets[nan_position])
 
     def training_step(self,
