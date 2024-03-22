@@ -89,7 +89,7 @@ class HumanPoseMidHipDatasetWithGeometricInvariantFeatures(HumanPoseDataset):
         full = torch.from_numpy(self._data[index])
         raw = full[:, self.joints]
 
-        velocity = raw[1:] - sample[:-1]
+        velocity = raw[1:] - raw[:-1]
         velocity_magnitude = torch.norm(
             (velocity[1:] + velocity[:-1]) / 2,
             dim=2, # (n_timesteps, n_joints, d_joint)
