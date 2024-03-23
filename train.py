@@ -84,8 +84,10 @@ def main(hparams: Namespace) -> None:
             num_nodes=1,
             fast_dev_run=hparams.fast_dev_run,
         )
-        model = TrainableFootballTransformer.load_from_checkpoint(
-            checkpoint_callback.best_model_path)
+
+        if not hparams.fast_dev_run:
+            model = TrainableFootballTransformer.load_from_checkpoint(
+                checkpoint_callback.best_model_path)
 
         trainer.test(
             model=model,
