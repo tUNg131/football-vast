@@ -78,7 +78,12 @@ def main(hparams: Namespace) -> None:
     # Start testing
     torch.distributed.destroy_process_group()
     if trainer.is_global_zero:
-        trainer = Trainer(devices=1, num_nodes=1, logger=tb_logger)
+        trainer = Trainer(
+            logger=tb_logger,
+            devices=1,
+            num_nodes=1,
+            fast_dev_run=hparams.fast_dev_run,
+        )
         model = TrainableFootballTransformer.load_from_checkpoint(
             checkpoint_callback.best_model_path)
 
