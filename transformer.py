@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 import optimizer
 from model import FootballTransformer
 from dataset import (
-    HumanPoseMidHipDatasetWithGeometricInvariantFeatures,
+    HumanPoseMidHipDataset,
     DropRandomChunkVariableSize,
     DropRandomUniform,
     DropRandomChunk,
@@ -28,7 +28,7 @@ DEFAULT_LOADER_WORKER_COUNT = os.cpu_count() - 1
 class TrainableFootballTransformer(pl.LightningModule):
 
     class DataModule(pl.LightningDataModule):
-        __dataset_class__  = HumanPoseMidHipDatasetWithGeometricInvariantFeatures
+        __dataset_class__  = HumanPoseMidHipDataset
 
         def __init__(self, model: Type[pl.LightningModule]) -> None:
             super().__init__()
@@ -55,7 +55,7 @@ class TrainableFootballTransformer(pl.LightningModule):
 
                 self._val_dataset = self.__dataset_class__(
                     path=self.hparams.val_path,
-                    drop=drop,
+                    drop=DropRandomChunkVariableSize(15),
                 )
 
         def train_dataloader(self) -> DataLoader:

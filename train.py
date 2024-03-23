@@ -76,14 +76,20 @@ def main(hparams: Namespace) -> None:
     trainer.fit(model=model, datamodule=model.datamodule)
 
     # Start testing
-    trainer.test(
-        ckpt_path="best",
-        dataloaders=[
-            model.datamodule.get_test_dataloader(gs)
-            for gs in range(1, 16)
-        ],
-        verbose=True,
-    )
+    torch.distributed.destroy_process_group()
+    if trainer.is_global_zero:
+        trainer = Trainer(devices=1, num_nodes=1)
+        model = TrainableFootballTransformer.load_from_checkpoint(
+            checkpoint_callback.best_model_path)
+
+        trainer.test(
+            model=model,
+            dataloaders=[
+                model.datamodule.get_test_dataloader(gs)
+                for gs in range(1, 16)
+            ],
+            verbose=True,
+        )
 
 
 if __name__ == "__main__":
