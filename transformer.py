@@ -82,7 +82,7 @@ class TrainableFootballTransformer(pl.LightningModule):
             return DataLoader(
                 dataset=dataset,
                 shuffle=False,
-                batch_size=self.hparams.val_batch_size,
+                batch_size=self.hparams.test_batch_size,
                 num_workers=self.hparams.loader_workers,
                 pin_memory=self.model.on_gpu
             )
@@ -443,6 +443,12 @@ class TrainableFootballTransformer(pl.LightningModule):
         parser.add_argument(
             "--val-batch-size",
             default=1536,
+            type=int,
+            help="Batch size to be used."
+        )
+        parser.add_argument(
+            "--test-batch-size",
+            default=2048,
             type=int,
             help="Batch size to be used."
         )
