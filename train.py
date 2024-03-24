@@ -82,6 +82,7 @@ def main(hparams: Namespace) -> None:
             logger=tb_logger,
             devices=1,
             num_nodes=1,
+            precision=hparams.precision,
             fast_dev_run=hparams.fast_dev_run,
         )
 
