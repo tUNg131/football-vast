@@ -54,7 +54,7 @@ class TrainableFootballTransformer(pl.LightningModule):
 
                 self._val_dataset = self.__dataset_class__(
                     path=self.hparams.val_path,
-                    drop=DropRandomChunkVariableSize(15),
+                    drop=drop,
                 )
 
         def train_dataloader(self) -> DataLoader:
@@ -224,7 +224,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         """
 
         np_model_loss_avg = (
-            torch.cat(self.model_loss, dim=1)
+            torch.cat(self.model_loss, dim=0)
             .mean(dim=(0, 2, 3), keepdim=False)
             .cpu()
             .numpy()
@@ -232,7 +232,7 @@ class TrainableFootballTransformer(pl.LightningModule):
 
         missing_timesteps_count = len(np_model_loss_avg)
         x = np.arange(missing_timesteps_count)
-        rects = plt.barh(x, np_model_loss_avg, 0.5, label="Outside in")
+        rects = plt.barh(x, np_model_loss_avg, 1, label="Outside in")
         plt.bar_label(rects, padding=3)
 
         plt.xlabel("MSE")
