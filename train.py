@@ -76,9 +76,10 @@ def main(hparams: Namespace) -> None:
     trainer.fit(model=model, datamodule=model.datamodule)
 
     # Start testing
-    torch.distributed.destroy_process_group()
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
     if trainer.is_global_zero:
-        trainer = Trainer(
+        tester = Trainer(
             logger=tb_logger,
             devices=1,
             num_nodes=1,
@@ -90,11 +91,10 @@ def main(hparams: Namespace) -> None:
             model = TrainableFootballTransformer.load_from_checkpoint(
                 checkpoint_callback.best_model_path)
 
-        trainer.test(
+        tester.test(
             model=model,
             dataloaders=[
-                model.datamodule.get_test_dataloader(gs)
-                for gs in range(1, 16)
+                model.datamodule.get_test_dataloader(15)
             ],
             verbose=True,
         )
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     ######################
     parser.add_argument(
         "--monitor",
-        default="val_loss",
+        default="val_nll",
         type=str,
         help="Quantity to monitor."
     )
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--min-epochs",
-        default=1,
+        default=15,
         type=int,
         help="Limits training to a minimum # of epochs.",
     )
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--precision",
-        default="32-true",
+        default="16-mixed",
         type=str,
         help=(
             "32-true, 16-mixed, bf16-mixed,"

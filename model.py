@@ -2,6 +2,29 @@ import torch
 from torch import nn, Tensor
 
 
+class MixtureDensityHead(nn.Module):
+    
+    def __init__(self,
+                 d_in: int,
+                 d_out: int,
+                 n_gaussian: int) -> None:
+        super().__init__()
+
+        self.pi = nn.Linear(d_in, n_gaussian)
+        self.sigma = nn.Sequential(
+            nn.Linear(d_in, d_out * n_gaussian),
+            nn.ELU(),
+        )
+        self.mu = nn.Linear(d_in, d_out * n_gaussian)
+
+    def forward(self, x: Tensor) -> Tensor:
+        pi = self.pi(x)
+        # Applying modified ELU activation
+        sigma = self.sigma(x) + 1 + 1e-15
+        mu = self.mu(x)
+        return pi, sigma, mu
+
+
 class Embedding(nn.Module):
 
     def __init__(self,
@@ -11,17 +34,10 @@ class Embedding(nn.Module):
                  d_model: int) -> None:
         super().__init__()
 
-        self.linear = nn.Linear(in_features=d_in,
-                                out_features=d_model)
-
-        self.time_embedding = nn.Embedding(num_embeddings=n_timesteps,
-                                           embedding_dim=d_model)
-
-        self.joint_embedding = nn.Embedding(num_embeddings=n_joints,
-                                            embedding_dim=d_model)
-
-        self.nan_embedding = nn.Embedding(num_embeddings=2,
-                                          embedding_dim=d_model)
+        self.linear = nn.Linear(d_in, d_model)
+        self.time_embedding = nn.Embedding(n_timesteps, d_model)
+        self.joint_embedding = nn.Embedding(n_joints, d_model)
+        self.nan_embedding = nn.Embedding(2, d_model)
 
         self.register_buffer(
             "timestep_labels",
@@ -36,7 +52,7 @@ class Embedding(nn.Module):
         )
 
     def forward(self, x: Tensor):
-        batch_size, *_ = x.shape
+        batch_size, *_ = x.size()
 
         time_emb = self.time_embedding(self.timestep_labels.repeat(batch_size, 1))
 
@@ -61,7 +77,8 @@ class FootballTransformer(nn.Module):
                  d_model: int,
                  d_feedforward: int,
                  dropout: int,
-                 activation: int) -> None:
+                 activation: int,
+                 n_gaussian: int) -> None:
         super().__init__()
 
         self.embedding = Embedding(n_timesteps=n_timesteps,
@@ -81,20 +98,14 @@ class FootballTransformer(nn.Module):
             num_layers=n_layers,
         )
 
-        self.linear = nn.Linear(in_features=d_model,
-                                out_features=d_out)
+        self.head = MixtureDensityHead(d_in=d_model,
+                                       d_out=d_out,
+                                       n_gaussian=n_gaussian)
         
-        self.n_timesteps = n_timesteps
-        self.n_joints = n_joints
-        self.d_in = d_in
-        self.d_out = d_out
+        self.n_tokens = n_timesteps * n_joints
 
     def forward(self, x: Tensor) -> Tensor:
-        x = x.view(-1, self.n_timesteps * self.n_joints, self.d_in)
-
         embed = self.embedding(x)
         feature = self.encoder(embed)
-        output = self.linear(feature)
-
-        output = output.view(-1, self.n_timesteps, self.n_joints, self.d_out)
+        output = self.head(feature)
         return output

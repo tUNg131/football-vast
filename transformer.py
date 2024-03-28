@@ -97,9 +97,6 @@ class TrainableFootballTransformer(pl.LightningModule):
         # Build model
         self.__build_model()
 
-        # Build loss criterion
-        self.__build_loss()
-
     def __build_model(self) -> None:
         """Init the model."""
         self._model = FootballTransformer(n_timesteps=self.hparams.n_timesteps,
@@ -111,213 +108,145 @@ class TrainableFootballTransformer(pl.LightningModule):
                                           d_model=self.hparams.d_model,
                                           d_feedforward=self.hparams.d_feedforward,
                                           dropout=self.hparams.dropout,
-                                          activation=self.hparams.activation)
-    def __build_loss(self) -> None:
-        """Initializes the loss function/s."""
-        self._loss = nn.functional.mse_loss
+                                          activation=self.hparams.activation,
+                                          n_gaussian=self.hparams.n_gaussian)
+    
+    def __select_dim1(self, x: Tensor, mask: Tensor) -> Tensor:
+        return x[mask]
+
+    def __to_model_format(self, *inputs):
+        return (
+            x.view(-1, self._model.n_tokens, self.hparams.d_in)
+            for x in inputs
+        )
+        
+    def __loss(self, x: Tensor, y: Tensor) -> Tensor:
+        nan_position = self.__nan_mask(x)
+        pi, sigma, mu = self._model(x)
+
+        pi = self.__select_dim1(pi, nan_position)
+        sigma = self.__select_dim1(sigma, nan_position)
+        mu = self.__select_dim1(mu, nan_position) 
+        y = self.__select_dim1(y, nan_position).repeat(1, self.hparams.n_gaussian)
+
+        log_pi = torch.log_softmax(pi, dim=-1)
+        log_normal_prob = (
+            (- torch.log(sigma) + 0.5 * torch.pow((y - mu) / sigma, 2))
+            .view(-1, self.hparams.n_gaussian, self.hparams.d_out)
+            .sum(dim=-1)
+        )
+        return -torch.logsumexp(log_pi + log_normal_prob, dim=-1)
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.__predict_all(x)
+        return self._model(x)
     
     def __nan_mask(self, x: Tensor) -> Tensor:
-        hparams = self.hparams
-        return (
-            x
-            .isnan()
-            .view(-1, hparams.n_timesteps, hparams.n_joints * hparams.d_in)
-            .any(dim=(2,))
-        )
+        return x.isnan().any(dim=(2,))
     
     def __nan_start_end_timesteps(self, x: Tensor) -> Tensor:
-        hparams = self.hparams
-
         # Find positions of NaN values
         nan_positions = self.__nan_mask(x).float()
 
         # Find the first and last NaN positions
         start_nan = nan_positions.argmax(dim=1)
-        end_nan = hparams.n_timesteps - nan_positions.flip(dims=(1,)).argmax(dim=1) - 1
+        end_nan =  self._model.n_tokens - nan_positions.flip(dims=(1,)).argmax(dim=1) - 1
 
         return start_nan, end_nan
-    
-    def __predict_all(self, x: Tensor) -> Tensor:
-        # Predict all timesteps
-        return self._model(x)
-    
-    def __predict_interpolate(self, x: Tensor) -> Tensor:
-        # Predict all timesteps using interpolation
-        device = self.device
-        batch_size, *_ = x.shape
-        out = x.clone()
-
-        s, e = self.__nan_start_end_timesteps(x)
-        missing_timesteps_count = e[0] - s[0] + 1
-        weights = (
-            torch
-            .linspace(0, 1, missing_timesteps_count + 2, device=device)
-            [1:-1]
-            .view(-1, 1, 1, 1)
-            .repeat(1, batch_size, self.hparams.n_joints, self.hparams.d_in)
-        )
-
-        a = torch.arange(batch_size)
-        b = a.unsqueeze(-1)
-        c = torch.stack(
-            [torch.arange(s_, e_ + 1) for s_, e_ in zip(s, e)],
-            dim=0
-        )
-        
-        interpolated = (
-            torch
-            .lerp(out[a, s - 1], out[a, e + 1], weights)
-            .transpose(0, 1)
-        )
-        out[b, c] = interpolated
-        
-        return out
-    
-    def __predict_rollout(self,
-                          x: Tensor,
-                          strategy: Optional[Literal["both", "left", "right"]] = "both"
-                          ) -> Tensor:
-        batch_size, *_ = x.shape
-        out = x.clone()
-
-        # Check if all batches have the same number of missing timesteps
-        missing_timesteps_count = self.__nan_mask(x).sum(dim=1)
-        if not torch.all(missing_timesteps_count == missing_timesteps_count[0]):
-            raise RuntimeError("Samples in the batch have different # of missing timesteps.")
-        
-        # Iterate until all NaN values are replaced
-        while out.isnan().any():
-            tmp = self._model(out).to(out.dtype)
-
-            s, e = self.__nan_start_end_timesteps(out)
-
-            # Replace NaN values with corresponding output values
-            i = torch.arange(batch_size)
-            if strategy == "left":
-                out[i, s] = tmp[i, s]
-            elif strategy == "right":
-                out[i, e] = tmp[i, e]
-            elif strategy == "both":
-                out[i, s] = tmp[i, s]
-                out[i, e] = tmp[i, e]
-            
-        return out
-
-    def loss(self, inputs: Tensor, model_out: Tensor, targets: Tensor) -> Tensor:
-        nan_position = self.__nan_mask(inputs)
-        return self._loss(model_out[nan_position], targets[nan_position])
 
     def training_step(self,
                       batch: Tuple[Tensor, Tensor],
                       batch_index: int) -> Tensor:
         
-        inputs, targets = batch
-        model_out = self._model(inputs)
-        loss = self.loss(inputs, model_out, targets)
-        self.log("train_loss", loss, sync_dist=True)
+        inputs, targets = self.__to_model_format(*batch)
+        loss = self.__loss(inputs, targets).mean()
+        self.log("train_nll", loss, sync_dist=True)
         return loss
 
     def validation_step(self,
                         batch: Tuple[Tensor, Tensor],
                         batch_index: int) -> Tensor:
         
-        inputs, targets = batch
-        model_out = self._model(inputs)
-        loss =  self.loss(inputs, model_out, targets)
-        self.log("val_loss", loss, sync_dist=True)
+        inputs, targets = self.__to_model_format(*batch)
+        loss =  self.__loss(inputs, targets).mean()
+        self.log("val_nll", loss, sync_dist=True)
         return loss
     
     def on_test_epoch_start(self) -> None:
         # Initialize test losses at the start of each epoch
-        self.model_losses = defaultdict(list)
-        self.loss_labels = ["All", "Outside in", "Left to right", "Right to left", "Interpolation"]
-
+        self.model_loss = []
+    
     def test_step(self,
                   batch: Tuple[Tensor, Tensor],
                   batch_index: int,
                   dataloader_idx: Optional[int] = 0) -> None:
-        """
-        Performs a single test step.
-        
-        Args:
-            batch (Tuple[Tensor, Tensor]): A tuple containing input and target tensors.
-            batch_index (int): Index of the current batch.
-        """
-        model_losses = self.model_losses[f"d{dataloader_idx}"]
 
-        inputs, targets = batch
-        batch_size, *_ = inputs.shape
+        inputs, targets = self.__to_model_format(*batch)
+        batch_size = inputs.size(0)
+        out = inputs.clone()
 
-        nan_position = torch.isnan(inputs)
+        while out.isnan().any():
+            # Inference
+            pi, sigma, mu = self._model(out)
+            pi = torch.softmax(pi, dim=-1)
+            sigma = (
+                sigma
+                .view(batch_size, -1, self.hparams.n_gaussian, self.hparams.d_out)
+                .prod(dim=-1)
+            )
+            mu = mu.view(batch_size, -1, self.hparams.n_gaussian, self.hparams.d_out)
+            idx = (
+                torch.argmax(pi / sigma, dim=-1)
+                .unsqueeze(-1)
+                .unsqueeze(-1)
+                .expand(-1, -1, -1, mu.size(-1))
+            )
 
-        # Compute outputs
-        model_output = torch.stack([
-            self.__predict_all(inputs),
-            self.__predict_rollout(inputs, "both"),
-            self.__predict_rollout(inputs, "left"),
-            self.__predict_rollout(inputs, "right"),
-            self.__predict_interpolate(inputs)
-        ])
+            pred = torch.gather(mu, 2, idx).squeeze(2)
 
-        # Compute loss for NaN positions
-        strategy_count = model_output.size(0)
-        o = model_output[:, nan_position]
-        t = targets[nan_position].repeat(strategy_count, 1)
+            s, e = self.__nan_start_end_timesteps(out)
 
-        model_loss = (
-            self
-            ._loss(o, t, reduction='none')
-            .view(strategy_count, batch_size, -1, self.hparams.n_joints, self.hparams.d_in)
+            i = torch.arange(batch_size)
+            out[i, s] = pred[i, s]
+            out[i, e] = pred[i, e]
+
+        nan_position = self.__nan_mask(inputs)
+        loss = (
+            nn.functional
+            .mse_loss(targets[nan_position], out[nan_position], reduction='none')
+            .view(batch_size, -1, self.hparams.n_joints, self.hparams.d_out)
         )
 
-        model_losses.append(model_loss)
+        self.model_loss.append(loss)
 
     def on_test_epoch_end(self) -> None:
         """
         Performs actions at the end of each test epoch.
         """
 
-        for model_loss in self.model_losses.values():
-            np_model_loss_avg = (
-                torch.cat(model_loss, dim=1)
-                .mean(dim=(1, 3, 4), keepdim=False)
-                .cpu()
-                .numpy()
-            )
+        np_model_loss_avg = (
+            torch.cat(self.model_loss, dim=1)
+            .mean(dim=(0, 2, 3), keepdim=False)
+            .cpu()
+            .numpy()
+        )
 
-            missing_timesteps_count = np_model_loss_avg.shape[1]
-            x = np.arange(missing_timesteps_count)
-            width = 0.15
-            multiplier = 0
+        missing_timesteps_count = len(np_model_loss_avg)
+        x = np.arange(missing_timesteps_count)
+        rects = plt.barh(x, np_model_loss_avg, 0.5, label="Outside in")
+        plt.bar_label(rects, padding=3)
 
-            plt.figure(figsize=(10, 20))
-
-            for label, loss in zip(self.loss_labels, np_model_loss_avg):
-                offset = width * multiplier
-
-                rects = plt.barh(x + offset, loss, width, label=label)
-                plt.bar_label(rects, padding=3)
-
-                multiplier += 1
-
-            plt.xlabel("MSE")
-            plt.ylim(-1, 15)
-            plt.ylabel("Timesteps")
-            plt.gca().invert_yaxis()
-            plt.yticks(x + width * len(self.loss_labels) / 2, x)
-            plt.title(f"MSE by strategies (gap size = {missing_timesteps_count})")
-            plt.legend(loc="upper right",
-                       ncols=len(self.loss_labels))
-            
-            # Add the plot to TensorBoard
-            self.logger.experiment.add_figure(f"Loss/gapsize = {missing_timesteps_count}", plt.gcf())
+        plt.xlabel("MSE")
+        plt.ylabel("Timesteps")
+        plt.gca().invert_yaxis()
+        plt.yticks(x, x + 1)
+        plt.title(f"MSE by strategies (gap size = {missing_timesteps_count})")
+        plt.legend(loc="upper right")
+        
+        # Add the plot to TensorBoard
+        self.logger.experiment.add_figure(f"Loss/gapsize = {missing_timesteps_count}", plt.gcf())
 
         # Clear the test losses for the next epoch
-        self.model_losses.clear()
-        self.loss_labels.clear()
+        self.model_loss.clear()
  
     def configure_optimizers(self) -> Optimizer:
         optimizer_name = self.hparams.optimizer
@@ -352,6 +281,12 @@ class TrainableFootballTransformer(pl.LightningModule):
             default=3,
             type=int,
             help="Dimension of input tokens."
+        )
+        parser.add_argument(
+            "--d-out",
+            default=3,
+            type=int,
+            help="Dimension of output tokens."
         )
         parser.add_argument(
             "--n-heads",
@@ -390,10 +325,10 @@ class TrainableFootballTransformer(pl.LightningModule):
             help="The activation function of the layers"
         )
         parser.add_argument(
-            "--d-out",
-            default=3,
+            "--n-gaussian",
+            default=5,
             type=int,
-            help="Dimension of output tokens."
+            help="Number of Gaussian components in mixture density network."
         )
         parser.add_argument(
             "--learning-rate",
@@ -436,19 +371,19 @@ class TrainableFootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--train-batch-size",
-            default=168,
+            default=200,
             type=int,
             help="Batch size to be used."
         )
         parser.add_argument(
             "--val-batch-size",
-            default=1536,
+            default=200,
             type=int,
             help="Batch size to be used."
         )
         parser.add_argument(
             "--test-batch-size",
-            default=2048,
+            default=2000,
             type=int,
             help="Batch size to be used."
         )
@@ -460,7 +395,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--masking-strategy",
-            default=["vchunk", 15],
+            default=["random", 50],
             nargs="+",
             help="Mask strategy. e.g. vchunk15, chunk15, random50.",
         )
