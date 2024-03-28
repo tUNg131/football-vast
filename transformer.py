@@ -1,7 +1,6 @@
 import os
 from argparse import ArgumentParser, Namespace
-from typing import Tuple, Type, Optional, Literal
-from collections import defaultdict
+from typing import Tuple, Type, Optional
 
 import torch
 import numpy as np
@@ -125,13 +124,13 @@ class TrainableFootballTransformer(pl.LightningModule):
         pi, sigma, mu = self._model(x)
 
         pi = self.__select_dim1(pi, nan_position)
-        sigma = self.__select_dim1(sigma, nan_position)
+        sigma = self.__select_dim1(sigma, nan_position) + 1e-8
         mu = self.__select_dim1(mu, nan_position) 
         y = self.__select_dim1(y, nan_position).repeat(1, self.hparams.n_gaussian)
 
-        log_pi = torch.log_softmax(pi, dim=-1)
+        log_pi = torch.log_softmax(pi + 1e-8, dim=-1)
         log_normal_prob = (
-            (- torch.log(sigma) + 0.5 * torch.pow((y - mu) / sigma, 2))
+            (- torch.log(sigma) - 0.5 * torch.pow((y - mu) / sigma, 2))
             .view(-1, self.hparams.n_gaussian, self.hparams.d_out)
             .sum(dim=-1)
         )
