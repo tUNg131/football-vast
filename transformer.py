@@ -187,6 +187,7 @@ class TrainableFootballTransformer(pl.LightningModule):
         while out.isnan().any():
             # Inference
             pi, sigma, mu = self._model(out)
+            pi, sigma, mu = pi.to(out), sigma.to(out), mu.to(out)
             pi = torch.softmax(pi, dim=-1)
             sigma = (
                 sigma
