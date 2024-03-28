@@ -98,6 +98,18 @@ class FootballTransformer(nn.Module):
             num_layers=n_layers,
         )
 
+        self.decoder = nn.TransformerDecoder(
+            decoder_layer=nn.TransformerDecoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=d_feedforward,
+                dropout=dropout,
+                activation=activation,
+                batch_first=True
+            ),
+            num_layers=n_layers
+        )
+
         self.head = MixtureDensityHead(d_in=d_model,
                                        d_out=d_out,
                                        n_gaussian=n_gaussian)
