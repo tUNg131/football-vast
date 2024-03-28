@@ -372,13 +372,13 @@ class TrainableFootballTransformer(pl.LightningModule):
         )
         parser.add_argument(
             "--train-batch-size",
-            default=200,
+            default=208,
             type=int,
             help="Batch size to be used."
         )
         parser.add_argument(
             "--val-batch-size",
-            default=200,
+            default=208,
             type=int,
             help="Batch size to be used."
         )
